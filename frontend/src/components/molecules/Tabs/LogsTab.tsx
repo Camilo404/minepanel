@@ -1,19 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Terminal, RefreshCcw, Cpu, Server, AlertTriangle, XCircle, CheckCircle, Clock, Search, Filter, Play, Pause } from "lucide-react";
+import { Terminal, RefreshCcw, Cpu, Server, Play, Pause, ChevronDown, Search } from "lucide-react";
 import { useServerLogs } from "@/lib/hooks/useServerLogs";
 import { getResources } from "@/services/docker/fetchs";
 import { useLanguage } from "@/lib/hooks/useLanguage";
 import Image from "next/image";
-import LogsControls from "../Logs/LogsControls";
-import LogsErrorAlert from "../Logs/LogsErrorAlert";
 import LogsStatusAlert from "../Logs/LogsStatusAlert";
-import LogsLastUpdate from "../Logs/LogsLastUpdate";
-import LogsFooter from "../Logs/LogsFooter";
-import LogsResources from "../Logs/LogsResources";
 import { LogsDisplay } from "../Logs/LogsDisplay";
 import { QuickCommandConsole } from "../Logs/QuickCommandConsole";
+import { cn } from "@/lib/utils";
 
 export interface LogEntry {
   id: string;
@@ -43,12 +37,11 @@ interface LogsTabProps {
 
 export function LogsTab({ serverId, rconPort, rconPassword, serverStatus }: Readonly<LogsTabProps>) {
   const { t } = useLanguage();
-  const { logs, logEntries, filteredLogEntries, loading, lineCount, error, hasErrors, lastUpdate, isRealTime, searchTerm, levelFilter, fetchLogs, setLogLines, clearError, toggleRealTime, setSearchTerm, setLevelFilter } = useServerLogs(serverId);
+  const { logs, filteredLogEntries, loading, lineCount, error, hasErrors, lastUpdate, isRealTime, searchTerm, levelFilter, fetchLogs, setLogLines, clearError, toggleRealTime, setSearchTerm, setLevelFilter } = useServerLogs(serverId);
 
   const logsContainerRef = useRef<HTMLPreElement>(null!);
   const [resources, setResources] = useState<ResourcesData | null>(null);
   const [loadingResources, setLoadingResources] = useState(false);
-  const [resourcesError, setResourcesError] = useState<string | null>(null);
   const [autoScroll, setAutoScroll] = useState(true);
   const isUserScrollingRef = useRef(false);
   const manualScrollControlRef = useRef(false);
@@ -71,12 +64,10 @@ export function LogsTab({ serverId, rconPort, rconPassword, serverStatus }: Read
     const handleScroll = () => {
       if (!isUserScrollingRef.current && !manualScrollControlRef.current) {
         const nearBottom = isNearBottom(container);
-
         if (nearBottom !== autoScroll) {
           setAutoScroll(nearBottom);
         }
       }
-
       isUserScrollingRef.current = true;
       setTimeout(() => {
         isUserScrollingRef.current = false;
@@ -95,13 +86,11 @@ export function LogsTab({ serverId, rconPort, rconPassword, serverStatus }: Read
 
   const fetchServerResources = async () => {
     setLoadingResources(true);
-    setResourcesError(null);
     try {
       const resourceData = await getResources(serverId);
       setResources(resourceData);
     } catch (error) {
       console.error("Error fetching server resources:", error);
-      setResourcesError(t("errorFetchingResources"));
       setResources({
         cpuUsage: "N/A",
         memoryUsage: "N/A",
@@ -115,64 +104,231 @@ export function LogsTab({ serverId, rconPort, rconPassword, serverStatus }: Read
 
   const handleRefreshLogs = async () => {
     clearError();
-    await fetchLogs();
+    await Promise.all([fetchLogs(), fetchServerResources()]);
   };
 
   const handleAutoScrollToggle = (value: boolean) => {
     manualScrollControlRef.current = true;
     setAutoScroll(value);
-
     if (value && logsContainerRef.current) {
       logsContainerRef.current.scrollTop = logsContainerRef.current.scrollHeight;
     }
-
     setTimeout(() => {
       manualScrollControlRef.current = false;
     }, 500);
   };
 
+  const cpuValue = (() => {
+    if (loadingResources) return "…";
+    if (!resources) return "N/A";
+    if (resources.status === "error") return t("error");
+    if (resources.status !== "running" && resources.cpuUsage === "N/A") return t("serverInactive");
+    return resources.cpuUsage;
+  })();
+  const memoryValue = (() => {
+    if (loadingResources) return "…";
+    if (!resources) return "N/A";
+    if (resources.status === "error") return t("error");
+    if (resources.status !== "running" && resources.memoryUsage === "N/A") return t("serverInactive");
+    return `${resources.memoryUsage} / ${resources.memoryLimit}`;
+  })();
+
+  const isLive = isRealTime && !error;
+  const totalEntries = filteredLogEntries.length;
+
   return (
-    <Card className={`bg-gray-900/60 border-gray-700/50 shadow-lg transition-all duration-300 overflow-hidden`}>
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <div>
-          <CardTitle className="text-xl text-emerald-400 font-minecraft flex items-center gap-2">
-            <Image src="/images/command-block.webp" alt="Logs" width={24} height={24} className="opacity-90" />
-            {t("serverLogs")}
-            {isRealTime && (
-              <div className="flex items-center ml-2">
-                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse mr-1"></div>
-                <span className="text-xs text-green-400">{t("liveLabel")}</span>
-              </div>
-            )}
-          </CardTitle>
-          <CardDescription className="text-gray-300">
-            {t("viewLogsRealtime")}
-            {filteredLogEntries.length > 0 && (
-              <span className="ml-2 text-emerald-400">
-                ({filteredLogEntries.length} {t("entries")})
-              </span>
-            )}
-          </CardDescription>
+    <div className="mc-panel p-0 overflow-hidden animate-fade-in-up">
+      {/* Title bar with title + live indicator + compact stats */}
+      <div className="mc-titlebar flex flex-wrap items-center gap-2 px-4 py-2.5">
+        <Image src="/images/command-block.webp" alt="Logs" width={22} height={22} className="pixelated opacity-90" />
+        <h2 className="font-minecraft text-sm text-white drop-shadow-glow">
+          {t("serverLogs")}
+          <span className="text-gray-400 font-normal text-xs ml-1.5 hidden sm:inline">• {t("viewLogsRealtime")}</span>
+        </h2>
+
+        {isLive && (
+          <span className="mc-tag text-[10px] px-2 py-0.5 flex items-center gap-1.5 bg-emerald-700/70 text-emerald-200">
+            <span className="w-1.5 h-1.5 bg-emerald-300 rounded-full animate-pulse" />
+            {t("liveLabel")}
+          </span>
+        )}
+
+        {/* Compact CPU + RAM stats */}
+        <div className="flex items-center gap-2 ml-auto">
+          <div className="mc-slot flex items-center gap-2 px-2.5 py-1">
+            <div className="mc-slot w-7 h-7 shrink-0 flex items-center justify-center">
+              <Cpu className="w-3.5 h-3.5 text-cyan-300" />
+            </div>
+            <div className="leading-tight">
+              <p className="text-[9px] text-gray-400 font-minecraft uppercase tracking-wider">CPU</p>
+              <p className="text-[11px] font-mono text-cyan-300">{cpuValue}</p>
+            </div>
+          </div>
+          <div className="mc-slot flex items-center gap-2 px-2.5 py-1">
+            <div className="mc-slot w-7 h-7 shrink-0 flex items-center justify-center">
+              <Server className="w-3.5 h-3.5 text-purple-300" />
+            </div>
+            <div className="leading-tight">
+              <p className="text-[9px] text-gray-400 font-minecraft uppercase tracking-wider">RAM</p>
+              <p className="text-[11px] font-mono text-purple-300 truncate max-w-[140px]">{memoryValue}</p>
+            </div>
+          </div>
         </div>
-      </CardHeader>
-      <LogsControls searchTerm={searchTerm} setSearchTerm={setSearchTerm} levelFilter={levelFilter} setLevelFilter={setLevelFilter} autoScroll={autoScroll} setAutoScroll={handleAutoScrollToggle} lineCount={lineCount} setLogLines={setLogLines} isRealTime={isRealTime} toggleRealTime={toggleRealTime} loading={loading} handleRefreshLogs={handleRefreshLogs} />
-      <LogsErrorAlert error={error} resourcesError={resourcesError} />
+      </div>
+
+      {/* Compact alert strip (only when needed) */}
       <LogsStatusAlert hasErrors={hasErrors} error={error} />
-      <LogsLastUpdate lastUpdate={lastUpdate} error={error} />
-      <LogsResources resources={resources} loadingResources={loadingResources} resourcesError={resourcesError} />
-      <LogsDisplay logsContainerRef={logsContainerRef} filteredLogEntries={filteredLogEntries} logs={logs} loading={loading} error={error} hasErrors={hasErrors} handleRefreshLogs={handleRefreshLogs} />
-      <QuickCommandConsole serverId={serverId} rconPort={rconPort || ""} rconPassword={rconPassword || ""} serverStatus={serverStatus || "stopped"} />
-      <LogsFooter error={error} hasErrors={hasErrors} isRealTime={isRealTime} lastUpdate={lastUpdate} filteredLogEntries={filteredLogEntries} logEntries={logEntries} loadingResources={loadingResources} fetchServerResources={fetchServerResources} resourcesError={resourcesError} />
+
+      {/* Controls toolbar */}
+      <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b-2 border-[var(--mc-frame)]/60">
+        <div className="relative flex-1 min-w-[180px]">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" />
+          <input
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            placeholder={t("searchInLogs")}
+            className="mc-input w-full pl-9 pr-3 py-1.5 text-sm"
+          />
+        </div>
+
+        <div className="relative">
+          <select
+            value={levelFilter}
+            onChange={(e) => setLevelFilter(e.target.value)}
+            className="appearance-none mc-input pl-3 pr-8 py-1.5 text-sm cursor-pointer"
+          >
+            <option value="all">{t("allLevels")}</option>
+            <option value="error">{t("onlyErrors")}</option>
+            <option value="warn">{t("onlyWarnings")}</option>
+            <option value="info">{t("onlyInfo")}</option>
+            <option value="debug">{t("onlyDebug")}</option>
+          </select>
+          <ChevronDown className="w-3.5 h-3.5 absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+        </div>
+
+        <div className="flex items-center gap-2 px-2.5 py-1 mc-slot">
+          <label className="flex items-center gap-1.5 cursor-pointer text-[11px] font-minecraft text-gray-300">
+            <input
+              type="checkbox"
+              checked={autoScroll}
+              onChange={(e) => handleAutoScrollToggle(e.target.checked)}
+              className="rounded border-gray-600 bg-gray-800 accent-emerald-500"
+            />
+            {t("autoScroll")}
+          </label>
+          <div className="w-px h-4 bg-[var(--mc-frame)]" />
+          <span className="text-[11px] font-minecraft text-gray-400">{t("lines")}:</span>
+          <select
+            value={lineCount}
+            onChange={(e) => setLogLines(Number(e.target.value))}
+            className="bg-transparent text-[11px] font-mono text-gray-200 outline-none cursor-pointer"
+          >
+            <option value={100}>100</option>
+            <option value={500}>500</option>
+            <option value={1000}>1000</option>
+            <option value={2000}>2000</option>
+          </select>
+        </div>
+
+        <button
+          type="button"
+          onClick={toggleRealTime}
+          className={cn("mc-btn px-3 py-1.5 text-[11px]", isRealTime ? "mc-btn-emerald" : "mc-btn-gold")}
+        >
+          {isRealTime ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+          {isRealTime ? t("pause") : t("resume")}
+        </button>
+        <button
+          type="button"
+          onClick={handleRefreshLogs}
+          disabled={loading}
+          className="mc-btn mc-btn-lapis px-3 py-1.5 text-[11px]"
+          title={t("refresh")}
+        >
+          <RefreshCcw className={cn("w-3.5 h-3.5", loading && "animate-spin")} />
+        </button>
+      </div>
+
+      {/* Logs display */}
+      <LogsDisplay
+        logsContainerRef={logsContainerRef}
+        filteredLogEntries={filteredLogEntries}
+        logs={logs}
+        loading={loading}
+        error={error}
+        hasErrors={hasErrors}
+        handleRefreshLogs={handleRefreshLogs}
+      />
+
+      {/* Quick command console */}
+      <QuickCommandConsole
+        serverId={serverId}
+        rconPort={rconPort || ""}
+        rconPassword={rconPassword || ""}
+        serverStatus={serverStatus || "stopped"}
+      />
+
+      {/* Compact footer */}
+      <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 border-t-2 border-[var(--mc-frame)]/60 bg-black/20">
+        <div className="flex flex-wrap items-center gap-3 text-[11px] font-minecraft text-gray-400">
+          <div className="flex items-center gap-1.5">
+            <span
+              className={cn(
+                "w-2 h-2 rounded-full",
+                error
+                  ? "bg-red-500"
+                  : hasErrors
+                    ? "bg-yellow-500 animate-pulse"
+                    : isRealTime
+                      ? "bg-emerald-500 animate-pulse"
+                      : "bg-gray-500"
+              )}
+            />
+            <span>
+              {error
+                ? t("disconnected")
+                : hasErrors
+                  ? t("withErrors")
+                  : isRealTime
+                    ? t("realTimeActive")
+                    : t("realTimePaused")}
+            </span>
+          </div>
+          {lastUpdate && !error && (
+            <div className="flex items-center gap-1 text-gray-500">
+              <Terminal className="w-3 h-3" />
+              <span className="font-mono">{lastUpdate.toLocaleTimeString()}</span>
+            </div>
+          )}
+          <span>
+            {t("showing")} {totalEntries} {t("of")} {totalEntries} {t("entries")}
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={fetchServerResources}
+          disabled={loadingResources}
+          className="mc-btn mc-btn-amethyst px-3 py-1.5 text-[11px]"
+          title={t("resources")}
+        >
+          <RefreshCcw className={cn("w-3.5 h-3.5", loadingResources && "animate-spin")} />
+          {t("resources")}
+        </button>
+      </div>
+
+      {/* Inline CSS for log entry styling */}
       <style jsx global>{`
         .minecraft-log {
-          line-height: 1.4;
+          line-height: 1.45;
           word-wrap: break-word;
           overflow-wrap: break-word;
           max-width: 100%;
         }
         .log-entry {
-          word-wrap: break-word;
-          overflow-wrap: break-word;
+          transition: background-color 0.15s ease;
+        }
+        .log-entry:hover {
+          background-color: rgba(255, 255, 255, 0.025);
         }
         .minecraft-log .error,
         .minecraft-log .severe,
@@ -202,56 +358,6 @@ export function LogsTab({ serverId, rconPort, rconPassword, serverStatus }: Read
         .minecraft-log [level="DEBUG"] {
           color: #aaaaaa;
         }
-        /* Highlight error patterns */
-        .minecraft-log:contains("Exception"),
-        .minecraft-log:contains("java.lang."),
-        .minecraft-log:contains("Caused by:"),
-        .minecraft-log:contains("[STDERR]"),
-        .minecraft-log:contains("Failed to"),
-        .minecraft-log:contains("Cannot"),
-        .minecraft-log:contains("Unable to") {
-          background: rgba(255, 85, 85, 0.05);
-          border-left: 3px solid #ff5555;
-          padding-left: 8px;
-          margin: 2px 0;
-        }
-        /* Fatal errors */
-        .minecraft-log:contains("FATAL") {
-          color: #ff1744;
-          background: rgba(255, 23, 68, 0.15);
-          padding: 4px 6px;
-          border-radius: 4px;
-          border: 1px solid rgba(255, 23, 68, 0.3);
-          font-weight: 700;
-          animation: pulse 2s infinite;
-        }
-        @keyframes pulse {
-          0%,
-          100% {
-            opacity: 1;
-          }
-          50% {
-            opacity: 0.7;
-          }
-        }
-        /* Success patterns */
-        .minecraft-log:contains("Server started"),
-        .minecraft-log:contains("Done ("),
-        .minecraft-log:contains("successfully") {
-          color: #4caf50;
-          background: rgba(76, 175, 80, 0.1);
-          padding: 2px 4px;
-          border-radius: 2px;
-          font-weight: 500;
-        }
-        /* Log entry styling */
-        .log-entry {
-          transition: background-color 0.2s ease;
-        }
-        .log-entry:hover {
-          background-color: rgba(255, 255, 255, 0.02);
-        }
-        /* Estilizar scrollbar para navegadores webkit */
         .logs-container::-webkit-scrollbar {
           width: 8px;
         }
@@ -268,6 +374,6 @@ export function LogsTab({ serverId, rconPort, rconPassword, serverStatus }: Read
           background-color: rgba(75, 85, 99, 0.8);
         }
       `}</style>
-    </Card>
+    </div>
   );
 }

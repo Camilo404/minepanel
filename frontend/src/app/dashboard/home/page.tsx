@@ -1,25 +1,22 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { Activity, HardDrive, Cpu, Plus, Server, FolderOpen, Settings } from "lucide-react";
-import { fetchServerList, getAllServersStatus } from "@/services/docker/fetchs";
+import { fetchServerList, getAllServersResources, ServerResourceInfo } from "@/services/docker/fetchs";
 import { getSystemStats, formatBytes, SystemStats } from "@/services/system/system.service";
 import { useLanguage } from "@/lib/hooks/useLanguage";
 import { ServerQuickView } from "@/components/dashboard/ServerQuickView";
 import { SystemAlerts } from "@/components/dashboard/SystemAlerts";
 import { getSessionUser } from "@/services/auth/auth.service";
 
-type ServerInfo = {
-  id: string;
-  serverName?: string;
-  status: "running" | "stopped" | "starting" | "not_found" | "loading";
-};
+const REFRESH_INTERVAL_MS = 15_000;
 
 export default function HomePage() {
   const { t } = useLanguage();
-  const [servers, setServers] = useState<ServerInfo[]>([]);
+  const [servers, setServers] = useState<Array<{ id: string; serverName?: string }>>([]);
+  const [resources, setResources] = useState<Record<string, ServerResourceInfo>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [username, setUsername] = useState("");
   const [systemStats, setSystemStats] = useState<SystemStats | null>(null);
@@ -35,70 +32,36 @@ export default function HomePage() {
   useEffect(() => {
     let isMounted = true;
 
-    const fetchData = async () => {
+    const refreshAll = async () => {
       try {
-        const [serverList, stats] = await Promise.all([fetchServerList(), getSystemStats()]);
+        const [serverList, stats, res] = await Promise.all([fetchServerList(), getSystemStats(), getAllServersResources()]);
 
-        const formattedServers = serverList.map((server) => ({
-          ...server,
-          status: "loading" as const,
-        }));
-
-        if (isMounted) {
-          setServers(formattedServers);
-          setSystemStats(stats);
-          await updateServerStatuses(formattedServers);
-        }
+        if (!isMounted) return;
+        setServers(serverList);
+        setSystemStats(stats);
+        setResources(res || {});
       } catch (error) {
-        console.error("Error fetching data:", error);
+        console.error("Error fetching dashboard data:", error);
       } finally {
         if (isMounted) setIsLoading(false);
       }
     };
 
-    fetchData();
+    refreshAll();
 
     const interval = setInterval(() => {
       if (!isMounted) return;
-      const currentServers = serversRef.current;
-      if (currentServers.length > 0) {
-        updateServerStatuses(currentServers);
-      }
-      getSystemStats()
-        .then((stats) => {
-          if (isMounted) setSystemStats(stats);
-        })
-        .catch((error) => console.error("Error updating system stats:", error));
-    }, 30000);
+      refreshAll();
+    }, REFRESH_INTERVAL_MS);
 
     return () => {
       isMounted = false;
       clearInterval(interval);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const serversRef = useRef<ServerInfo[]>([]);
-  useEffect(() => {
-    serversRef.current = servers;
-  }, [servers]);
-
-  const updateServerStatuses = async (serversList: ServerInfo[]) => {
-    try {
-      const statusData = await getAllServersStatus();
-      setServers(
-        serversList.map((server) => ({
-          ...server,
-          status: statusData[server.id] || "not_found",
-        }))
-      );
-    } catch (error) {
-      console.error("Error updating server statuses:", error);
-    }
-  };
-
-  const runningServers = servers.filter((s) => s.status === "running").length;
-  const stoppedServers = servers.filter((s) => s.status === "stopped" || s.status === "not_found").length;
+  const runningServers = Object.values(resources).filter((res) => res.status === "running").length;
+  const stoppedServers = servers.length - runningServers;
 
   // Stat slots rendered as inventory item stacks
   const statSlots = [
@@ -192,7 +155,7 @@ export default function HomePage() {
         </div>
       </div>
 
-      {servers.length > 0 && <SystemAlerts servers={servers} />}
+      {servers.length > 0 && <SystemAlerts servers={servers} resources={resources} />}
 
       {/* System + Quick actions */}
       <div className="grid gap-6 lg:grid-cols-2 animate-fade-in-up stagger-2">
@@ -256,7 +219,7 @@ export default function HomePage() {
       {/* Servers Overview */}
       {servers.length > 0 && (
         <div className="animate-fade-in-up stagger-3">
-          <ServerQuickView servers={servers} />
+          <ServerQuickView servers={servers} resources={resources} isLoading={isLoading} />
         </div>
       )}
 

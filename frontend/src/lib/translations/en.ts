@@ -210,6 +210,13 @@ export const en = {
   alertServerDown: "Server '{server}' is down",
   alertHighCPU: "High CPU usage on '{server}': {value}%",
   alertHighMemory: "High memory usage on '{server}': {value}%",
+  searchServers: 'Search servers...',
+  filterAll: 'All',
+  javaEdition: 'Java',
+  bedrockEdition: 'Bedrock',
+  noMotd: 'No description',
+  noServersFound: 'No servers match your search',
+  noServersFoundDesc: 'Try adjusting your search or filter to find what you are looking for',
 
   // Settings Page
   settingsTitle: 'Settings',

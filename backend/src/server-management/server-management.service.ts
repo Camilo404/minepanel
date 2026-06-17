@@ -23,8 +23,11 @@ const DOCKER_COMMANDS = {
   INSPECT_STATUS: (containerId: string) => `docker inspect --format="{{.State.Status}}" ${containerId}`,
   STATS_CPU: (containerId: string) => `docker stats ${containerId} --no-stream --format "{{.CPUPerc}}"`,
   STATS_MEM: (containerId: string) => `docker stats ${containerId} --no-stream --format "{{.MemUsage}}"`,
-  // Single command to get all running containers stats at once (much faster)
-  STATS_ALL: String.raw`docker stats --no-stream --format "{{.Container}}\t{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}"`,
+  // Single command to get all running containers stats at once (much faster).
+  // --no-trunc is required so {{.ID}} matches the full IDs returned by PS_ALL.
+  STATS_ALL: String.raw`docker stats --no-stream --no-trunc --format "{{.ID}}\t{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}"`,
+  // Single command to get every container's state (used for status across all servers)
+  PS_ALL: String.raw`docker ps -a --no-trunc --format "{{.ID}}\t{{.Names}}\t{{.State}}"`,
   LOGS: (containerId: string, lines: number) => `docker logs --tail ${lines} --timestamps ${containerId} 2>&1`,
   LOGS_SINCE: (containerId: string, since: string) => `docker logs --since ${since} --timestamps ${containerId} 2>&1`,
   // Bedrock: TODO - commands disabled due to TTY/permission issues with send-command
@@ -39,6 +42,15 @@ const DOCKER_COMMANDS = {
   VOLUME_REMOVE: (volume: string) => `docker volume rm ${volume}`,
   DU_SIZE: (worldPath: string) => `du -sb "${worldPath}" | cut -f1`,
 } as const;
+
+interface ContainerSnapshot {
+  idByNameLower: Record<string, string>;
+  stateById: Record<string, ServerStatus>;
+  fetchedAt: number;
+}
+
+const CONTAINER_SNAPSHOT_TTL_MS = 1500;
+const STATS_SNAPSHOT_TTL_MS = 1500;
 
 export type ServerStatus = 'running' | 'stopped' | 'starting' | 'not_found';
 
@@ -89,6 +101,10 @@ export class ServerManagementService {
   private readonly BASE_DIR: string;
   private readonly COMPOSE_PROJECT?: string;
   private readonly RESERVED_SERVER_DIRS = new Set(['.world']);
+  private containerSnapshot: ContainerSnapshot | null = null;
+  private containerSnapshotPromise: Promise<ContainerSnapshot> | null = null;
+  private statsSnapshot: { byId: Record<string, { cpuUsage: string; memoryUsage: string; memoryLimit: string }>; byName: Record<string, { cpuUsage: string; memoryUsage: string; memoryLimit: string }>; fetchedAt: number } | null = null;
+  private statsSnapshotPromise: Promise<NonNullable<typeof this.statsSnapshot>> | null = null;
 
   constructor(
     private readonly configService: ConfigService,
@@ -779,33 +795,21 @@ export class ServerManagementService {
 
   async getAllServersStatus(): Promise<Record<string, ServerStatus>> {
     try {
-      const directories = await fs.readdir(this.SERVERS_DIR);
-      const serverDirectories = await Promise.all(
-        directories.map(async (dir) => {
-          if (this.RESERVED_SERVER_DIRS.has(dir) || dir.startsWith('.')) {
-            return null;
-          }
-          const fullPath = path.join(this.SERVERS_DIR, dir);
-          const isDirectory = (await fs.stat(fullPath)).isDirectory();
-          const hasDockerCompose = await fs.pathExists(this.getDockerComposePath(dir));
-          return isDirectory && hasDockerCompose ? dir : null;
-        }),
-      );
+      const validServers = await this.listValidServerIds();
+      if (validServers.length === 0) {
+        return {};
+      }
 
-      const validServers = serverDirectories.filter((dir): dir is string => dir !== null);
-      const statusPromises = validServers.map(async (serverId) => ({
-        serverId,
-        status: await this.getServerStatus(serverId),
-      }));
+      const snapshot = await this.getContainerSnapshot();
+      const composePaths = await Promise.all(validServers.map((id) => fs.pathExists(this.getDockerComposePath(id))));
+      const result: Record<string, ServerStatus> = {};
 
-      const statusResults = await Promise.all(statusPromises);
-      return statusResults.reduce(
-        (acc, { serverId, status }) => {
-          acc[serverId] = status;
-          return acc;
-        },
-        {} as Record<string, ServerStatus>,
-      );
+      validServers.forEach((serverId, index) => {
+        const state = this.resolveServerStatusFromSnapshot(serverId, snapshot, composePaths[index]);
+        result[serverId] = state;
+      });
+
+      return result;
     } catch (error) {
       this.logger.error('Error obtaining all servers status', error);
       return {};
@@ -986,89 +990,77 @@ export class ServerManagementService {
     >
   > {
     try {
-      const directories = await fs.readdir(this.SERVERS_DIR);
-      const serverDirectories = await Promise.all(
-        directories.map(async (dir) => {
-          if (this.RESERVED_SERVER_DIRS.has(dir) || dir.startsWith('.')) {
-            return null;
-          }
-          const fullPath = path.join(this.SERVERS_DIR, dir);
-          const isDirectory = (await fs.stat(fullPath)).isDirectory();
-          const hasDockerCompose = await fs.pathExists(this.getDockerComposePath(dir));
-          return isDirectory && hasDockerCompose ? dir : null;
-        }),
-      );
+      const validServers = await this.listValidServerIds();
+      if (validServers.length === 0) {
+        return {};
+      }
 
-      const validServers = serverDirectories.filter((dir): dir is string => dir !== null);
+      const [snapshot, statsSnapshot, composeExistsFlags, limitsResults] = await Promise.all([
+        this.getContainerSnapshot(),
+        this.getStatsSnapshot(),
+        Promise.all(validServers.map((id) => fs.pathExists(this.getDockerComposePath(id)))),
+        Promise.all(validServers.map((id) => this.getServerLimits(id))),
+      ]);
 
-      // Get all stats in ONE docker command (much faster than individual calls)
-      const allStats = await this.getAllContainersStats();
+      const result: Record<string, { status: ServerStatus; cpuUsage: string; memoryUsage: string; memoryLimit: string; cpuLimit: string; memoryConfigLimit: string }> = {};
 
-      // Get statuses and limits in parallel
-      const serverDataPromises = validServers.map(async (serverId) => {
-        const [status, limits, containerId] = await Promise.all([this.getServerStatus(serverId), this.getServerLimits(serverId), this.findContainerId(serverId)]);
-
-        // Prefer exact container ID mapping, then fallback to legacy name patterns
-        const stats = allStats.byId[containerId] || allStats.byName[serverId] || allStats.byName[`${serverId}-minecraft-1`] || allStats.byName[`${serverId}_minecraft_1`];
+      validServers.forEach((serverId, index) => {
+        const limits = limitsResults[index];
+        const status = this.resolveServerStatusFromSnapshot(serverId, snapshot, composeExistsFlags[index]);
+        const containerId = this.findContainerIdInSnapshot(serverId, snapshot);
+        const stats = containerId ? statsSnapshot.byId[containerId] : undefined;
 
         if (status !== 'running' || !stats) {
-          return {
-            serverId,
-            data: {
-              status,
-              cpuUsage: 'N/A',
-              memoryUsage: 'N/A',
-              memoryLimit: 'N/A',
-              cpuLimit: limits.cpuLimit,
-              memoryConfigLimit: limits.memoryLimit,
-            },
-          };
-        }
-
-        return {
-          serverId,
-          data: {
+          result[serverId] = {
             status,
-            cpuUsage: stats.cpuUsage,
-            memoryUsage: stats.memoryUsage,
-            memoryLimit: stats.memoryLimit,
+            cpuUsage: 'N/A',
+            memoryUsage: 'N/A',
+            memoryLimit: 'N/A',
             cpuLimit: limits.cpuLimit,
             memoryConfigLimit: limits.memoryLimit,
-          },
+          };
+          return;
+        }
+
+        result[serverId] = {
+          status,
+          cpuUsage: stats.cpuUsage,
+          memoryUsage: stats.memoryUsage,
+          memoryLimit: stats.memoryLimit,
+          cpuLimit: limits.cpuLimit,
+          memoryConfigLimit: limits.memoryLimit,
         };
       });
 
-      const results = await Promise.all(serverDataPromises);
-      return results.reduce(
-        (acc, { serverId, data }) => {
-          acc[serverId] = data;
-          return acc;
-        },
-        {} as Record<string, { status: ServerStatus; cpuUsage: string; memoryUsage: string; memoryLimit: string; cpuLimit: string; memoryConfigLimit: string }>,
-      );
+      return result;
     } catch (error) {
       this.logger.error('Error obtaining all servers resources', error);
       return {};
     }
   }
 
-  // Get stats for ALL running containers in a single docker command
-  private async getAllContainersStats(): Promise<{
-    byId: Record<string, { cpuUsage: string; memoryUsage: string; memoryLimit: string }>;
-    byName: Record<string, { cpuUsage: string; memoryUsage: string; memoryLimit: string }>;
-  }> {
-    try {
-      const { stdout } = await execAsync(DOCKER_COMMANDS.STATS_ALL);
-      const statsById: Record<string, { cpuUsage: string; memoryUsage: string; memoryLimit: string }> = {};
-      const statsByName: Record<string, { cpuUsage: string; memoryUsage: string; memoryLimit: string }> = {};
+  // Get stats for ALL running containers in a single docker command (cached for a few seconds)
+  private async getStatsSnapshot(): Promise<NonNullable<typeof this.statsSnapshot>> {
+    const now = Date.now();
+    if (this.statsSnapshot && now - this.statsSnapshot.fetchedAt < STATS_SNAPSHOT_TTL_MS) {
+      return this.statsSnapshot;
+    }
+    if (this.statsSnapshotPromise) {
+      return this.statsSnapshotPromise;
+    }
 
-      const lines = stdout
-        .trim()
-        .split('\n')
-        .filter((line) => line.trim());
-      for (const line of lines) {
-        const parts = line.split('\t');
-        if (parts.length >= 4) {
+    this.statsSnapshotPromise = (async () => {
+      try {
+        const { stdout } = await execAsync(DOCKER_COMMANDS.STATS_ALL);
+        const statsById: Record<string, { cpuUsage: string; memoryUsage: string; memoryLimit: string }> = {};
+        const statsByName: Record<string, { cpuUsage: string; memoryUsage: string; memoryLimit: string }> = {};
+
+        for (const line of stdout.split('\n')) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          const parts = trimmed.split('\t');
+          if (parts.length < 4) continue;
+
           const containerId = parts[0].trim();
           const name = parts[1].trim();
           const cpuUsage = parts[2].trim();
@@ -1083,13 +1075,129 @@ export class ServerManagementService {
           statsById[containerId] = parsedStats;
           statsByName[name] = parsedStats;
         }
-      }
 
-      return { byId: statsById, byName: statsByName };
-    } catch (error) {
-      this.logger.warn('Failed to get all containers stats:', error);
-      return { byId: {}, byName: {} };
+        this.statsSnapshot = { byId: statsById, byName: statsByName, fetchedAt: Date.now() };
+        return this.statsSnapshot;
+      } catch (error) {
+        this.logger.warn('Failed to get all containers stats:', error);
+        this.statsSnapshot = { byId: {}, byName: {}, fetchedAt: Date.now() };
+        return this.statsSnapshot;
+      } finally {
+        this.statsSnapshotPromise = null;
+      }
+    })();
+
+    return this.statsSnapshotPromise;
+  }
+
+  // Get a snapshot of every container on the host (id + name + state) in a single docker call.
+  // Reused by both getAllServersStatus and getAllServersResources to avoid N docker invocations.
+  private async getContainerSnapshot(): Promise<ContainerSnapshot> {
+    const now = Date.now();
+    if (this.containerSnapshot && now - this.containerSnapshot.fetchedAt < CONTAINER_SNAPSHOT_TTL_MS) {
+      return this.containerSnapshot;
     }
+    if (this.containerSnapshotPromise) {
+      return this.containerSnapshotPromise;
+    }
+
+    this.containerSnapshotPromise = (async () => {
+      try {
+        const { stdout } = await execAsync(DOCKER_COMMANDS.PS_ALL);
+        const idByNameLower: Record<string, string> = {};
+        const stateById: Record<string, ServerStatus> = {};
+
+        for (const line of stdout.split('\n')) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          const parts = trimmed.split('\t');
+          if (parts.length < 3) continue;
+
+          const id = parts[0].trim();
+          const name = parts[1].trim();
+          const rawState = parts[2].trim().toLowerCase();
+          idByNameLower[name.toLowerCase()] = id;
+          stateById[id] = this.mapDockerState(rawState);
+        }
+
+        this.containerSnapshot = { idByNameLower, stateById, fetchedAt: Date.now() };
+        return this.containerSnapshot;
+      } catch (error) {
+        this.logger.warn('Failed to get container snapshot:', error);
+        this.containerSnapshot = { idByNameLower: {}, stateById: {}, fetchedAt: Date.now() };
+        return this.containerSnapshot;
+      } finally {
+        this.containerSnapshotPromise = null;
+      }
+    })();
+
+    return this.containerSnapshotPromise;
+  }
+
+  private mapDockerState(rawState: string): ServerStatus {
+    if (rawState.includes('restarting') || rawState === 'created') {
+      return 'starting';
+    }
+    if (rawState === 'running' || rawState.startsWith('running ')) {
+      return 'running';
+    }
+    if (rawState === 'paused' || rawState.startsWith('exited') || rawState === 'dead' || rawState === 'removing' || rawState === 'removed') {
+      return 'stopped';
+    }
+    return 'stopped';
+  }
+
+  private async listValidServerIds(): Promise<string[]> {
+    const entries = await fs.readdir(this.SERVERS_DIR);
+    const checks = await Promise.all(
+      entries.map(async (entry) => {
+        if (this.RESERVED_SERVER_DIRS.has(entry) || entry.startsWith('.')) {
+          return null;
+        }
+        const fullPath = path.join(this.SERVERS_DIR, entry);
+        const isDir = (await fs.stat(fullPath)).isDirectory();
+        if (!isDir) return null;
+        const hasCompose = await fs.pathExists(this.getDockerComposePath(entry));
+        return hasCompose ? entry : null;
+      }),
+    );
+    return checks.filter((entry): entry is string => entry !== null);
+  }
+
+  private resolveServerStatusFromSnapshot(serverId: string, snapshot: ContainerSnapshot, composeExists: boolean): ServerStatus {
+    const containerId = this.findContainerIdInSnapshot(serverId, snapshot);
+    if (containerId) {
+      return snapshot.stateById[containerId] ?? 'stopped';
+    }
+    return composeExists ? 'stopped' : 'not_found';
+  }
+
+  // Build the set of possible container names for a server. Docker compose produces names like
+  // `<serverId>-mc-1` (no project prefix) or `<project>_<serverId>-mc-1` (with COMPOSE_PROJECT).
+  // Bedrock uses the same shape with `-bedrock-1`. Names are case-insensitive on the daemon.
+  private buildContainerNameCandidates(serverId: string): string[] {
+    const idLower = serverId.toLowerCase();
+    const project = this.COMPOSE_PROJECT?.trim();
+    const projectPrefix = project && /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(project) ? `${project.toLowerCase()}_${idLower}` : idLower;
+
+    return [
+      `${projectPrefix}-mc-1`,
+      `${projectPrefix}-bedrock-1`,
+      `${idLower}-mc-1`,
+      `${idLower}-bedrock-1`,
+      projectPrefix,
+    ];
+  }
+
+  private findContainerIdInSnapshot(serverId: string, snapshot: ContainerSnapshot): string {
+    if (!this.validateServerId(serverId)) {
+      return '';
+    }
+    for (const candidate of this.buildContainerNameCandidates(serverId)) {
+      const id = snapshot.idByNameLower[candidate.toLowerCase()];
+      if (id) return id;
+    }
+    return '';
   }
 
   private formatBytes(bytes: number, decimals = 2): string {
