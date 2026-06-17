@@ -1585,7 +1585,7 @@ export const es: Record<TranslationKey, string> = {
   forceWorldCopyDescription: 'Sobrescribe el nivel de destino en cada inicio (FORCE_WORLD_COPY=TRUE).',
   applyWorldAndRestart: 'Aplicar selección de mundo',
   selected: 'Seleccionado',
-  worldLibrary: 'Biblioteca de mundos',
+  worldLibrary: 'Mundos',
   worldLibraryDesc: 'Mundos globales compartidos entre todos los servidores. Organiza carpetas y archivos aquí.',
   worldDiscoverTitle: 'Descubrir mundos',
   worldDiscoverDescription:
