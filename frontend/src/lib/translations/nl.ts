@@ -215,6 +215,13 @@ export const nl: Record<TranslationKey, string> = {
   alertServerDown: "Server '{server}' is offline",
   alertHighCPU: "Hoog CPU-gebruik op '{server}': {value}%",
   alertHighMemory: "Hoog geheugengebruik op '{server}': {value}%",
+  searchServers: 'Servers zoeken...',
+  filterAll: 'Alle',
+  javaEdition: 'Java',
+  bedrockEdition: 'Bedrock',
+  noMotd: 'Geen beschrijving',
+  noServersFound: 'Geen servers gevonden voor je zoekopdracht',
+  noServersFoundDesc: 'Probeer je zoekopdracht of filter aan te passen om te vinden wat je zoekt',
 
   // Settings Page
   settingsTitle: 'Instellingen',

@@ -31,9 +31,18 @@ export interface SystemStats {
   platform: string;
 }
 
+const SYSTEM_STATS_TTL_MS = 2_000;
+
+interface CachedSystemStats {
+  stats: SystemStats;
+  fetchedAt: number;
+}
+
 @Injectable()
 export class SystemMonitoringService {
   private previousCpuInfo: { idle: number; total: number } | null = null;
+  private cache: CachedSystemStats | null = null;
+  private inflight: Promise<SystemStats> | null = null;
 
   constructor(
     private readonly configService: ConfigService,
@@ -42,17 +51,32 @@ export class SystemMonitoringService {
   ) {}
 
   async getSystemStats(): Promise<SystemStats> {
-    const cpuUsage = await this.getCpuUsage();
-    const memoryStats = this.getMemoryStats();
-    const diskStats = await this.getDiskStats();
+    const now = Date.now();
+    if (this.cache && now - this.cache.fetchedAt < SYSTEM_STATS_TTL_MS) {
+      return this.cache.stats;
+    }
+    if (this.inflight) {
+      return this.inflight;
+    }
 
-    return {
-      cpu: cpuUsage,
-      memory: memoryStats,
-      disk: diskStats,
-      uptime: os.uptime(),
-      platform: os.platform(),
-    };
+    this.inflight = (async () => {
+      try {
+        const [cpuUsage, memoryStats, diskStats] = await Promise.all([this.getCpuUsage(), Promise.resolve(this.getMemoryStats()), this.getDiskStats()]);
+        const stats: SystemStats = {
+          cpu: cpuUsage,
+          memory: memoryStats,
+          disk: diskStats,
+          uptime: os.uptime(),
+          platform: os.platform(),
+        };
+        this.cache = { stats, fetchedAt: Date.now() };
+        return stats;
+      } finally {
+        this.inflight = null;
+      }
+    })();
+
+    return this.inflight;
   }
 
   private async getCpuUsage(): Promise<{

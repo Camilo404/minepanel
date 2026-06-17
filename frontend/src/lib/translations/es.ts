@@ -213,6 +213,13 @@ export const es: Record<TranslationKey, string> = {
   alertServerDown: "El servidor '{server}' está caído",
   alertHighCPU: "Alto uso de CPU en '{server}': {value}%",
   alertHighMemory: "Alto uso de memoria en '{server}': {value}%",
+  searchServers: 'Buscar servidores...',
+  filterAll: 'Todos',
+  javaEdition: 'Java',
+  bedrockEdition: 'Bedrock',
+  noMotd: 'Sin descripción',
+  noServersFound: 'Ningún servidor coincide con tu búsqueda',
+  noServersFoundDesc: 'Prueba ajustando la búsqueda o el filtro para encontrar lo que buscas',
 
   // Página de Configuración
   settingsTitle: 'Configuración',

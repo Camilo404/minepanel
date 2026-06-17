@@ -1,14 +1,16 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useMemo } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { Cpu, Activity, Server, AlertTriangle, ArrowRight } from "lucide-react";
-import { getAllServersResources, ServerResourceInfo } from "@/services/docker/fetchs";
+import { ServerResourceInfo } from "@/services/docker/fetchs";
 import { useLanguage } from "@/lib/hooks/useLanguage";
 
 interface ServerQuickViewProps {
   servers: Array<{ id: string; serverName?: string }>;
+  resources: Record<string, ServerResourceInfo>;
+  isLoading?: boolean;
 }
 
 type ServerWithResources = {
@@ -63,62 +65,38 @@ function parseMemoryToPercent(usage: string, configLimit: string): number {
   return limitBytes > 0 ? (usedBytes / limitBytes) * 100 : 0;
 }
 
-export function ServerQuickView({ servers }: ServerQuickViewProps) {
+export function ServerQuickView({ servers, resources, isLoading = false }: ServerQuickViewProps) {
   const { t } = useLanguage();
-  const [serversData, setServersData] = useState<ServerWithResources[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
 
-  const fetchResources = useCallback(async () => {
-    if (servers.length === 0) {
-      setServersData([]);
-      setIsLoading(false);
-      return;
-    }
+  const serversData = useMemo<ServerWithResources[]>(() => {
+    return servers.map((server) => {
+      const res: ServerResourceInfo = resources[server.id] || {
+        status: "not_found",
+        cpuUsage: "N/A",
+        memoryUsage: "N/A",
+        memoryLimit: "N/A",
+        cpuLimit: "1",
+        memoryConfigLimit: "4G",
+      };
 
-    try {
-      const resources = await getAllServersResources();
+      const cpuUsage = parsePercentage(res.cpuUsage);
+      const cpuLimit = parseCpuLimit(res.cpuLimit);
+      // CPU usage is relative to system, limit is number of cores
+      // 100% per core, so cpuLimit=2 means max 200%
+      const cpuPercent = cpuLimit > 0 ? (cpuUsage / (cpuLimit * 100)) * 100 : 0;
 
-      const data: ServerWithResources[] = servers.map((server) => {
-        const res: ServerResourceInfo = resources[server.id] || {
-          status: "not_found",
-          cpuUsage: "N/A",
-          memoryUsage: "N/A",
-          memoryLimit: "N/A",
-          cpuLimit: "1",
-          memoryConfigLimit: "4G",
-        };
-
-        const cpuUsage = parsePercentage(res.cpuUsage);
-        const cpuLimit = parseCpuLimit(res.cpuLimit);
-        // CPU usage is relative to system, limit is number of cores
-        // 100% per core, so cpuLimit=2 means max 200%
-        const cpuPercent = cpuLimit > 0 ? (cpuUsage / (cpuLimit * 100)) * 100 : 0;
-
-        return {
-          id: server.id,
-          name: server.serverName || server.id,
-          status: res.status,
-          cpuUsage,
-          cpuLimit,
-          cpuPercent,
-          memoryUsage: res.memoryUsage,
-          memoryPercent: parseMemoryToPercent(res.memoryUsage, res.memoryConfigLimit),
-        };
-      });
-
-      setServersData(data);
-    } catch (error) {
-      console.error("Error fetching server resources:", error);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [servers]);
-
-  useEffect(() => {
-    fetchResources();
-    const interval = setInterval(fetchResources, 15000);
-    return () => clearInterval(interval);
-  }, [fetchResources]);
+      return {
+        id: server.id,
+        name: server.serverName || server.id,
+        status: res.status,
+        cpuUsage,
+        cpuLimit,
+        cpuPercent,
+        memoryUsage: res.memoryUsage,
+        memoryPercent: parseMemoryToPercent(res.memoryUsage, res.memoryConfigLimit),
+      };
+    });
+  }, [servers, resources]);
 
   const getStatusColor = (status: string) => {
     switch (status) {

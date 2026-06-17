@@ -213,6 +213,13 @@ export const pl: Record<TranslationKey, string> = {
   alertServerDown: "Serwer '{server}' jest wyłączony",
   alertHighCPU: "Wysokie użycie procesora na '{server}': {value}%",
   alertHighMemory: "Wysokie użycie pamięci na '{server}': {value}%",
+  searchServers: 'Szukaj serwerów...',
+  filterAll: 'Wszystkie',
+  javaEdition: 'Java',
+  bedrockEdition: 'Bedrock',
+  noMotd: 'Brak opisu',
+  noServersFound: 'Żaden serwer nie pasuje do twojego wyszukiwania',
+  noServersFoundDesc: 'Spróbuj dostosować wyszukiwanie lub filtr, aby znaleźć to, czego szukasz',
 
   // Ustawienia
   settingsTitle: 'Ustawienia',

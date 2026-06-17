@@ -210,6 +210,13 @@ export const fr = {
   alertServerDown: "Le serveur '{server}' est hors ligne",
   alertHighCPU: "Utilisation élevée du CPU sur '{server}' : {value}%",
   alertHighMemory: "Utilisation élevée de la mémoire sur '{server}' : {value}%",
+  searchServers: 'Rechercher des serveurs...',
+  filterAll: 'Tous',
+  javaEdition: 'Java',
+  bedrockEdition: 'Bedrock',
+  noMotd: 'Aucune description',
+  noServersFound: 'Aucun serveur ne correspond à votre recherche',
+  noServersFoundDesc: "Essayez d'ajuster votre recherche ou votre filtre pour trouver ce que vous cherchez",
 
   // Settings Page
   settingsTitle: 'Paramètres',
