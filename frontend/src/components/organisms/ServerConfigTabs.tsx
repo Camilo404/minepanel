@@ -67,7 +67,7 @@ export const ServerConfigTabs: FC<ServerConfigTabsProps> = ({ serverId, config, 
     { value: "advanced", label: t("advanced"), icon: Code, group: "config", show: true, disabled: isServerRunning },
     { value: "logs", label: t("logs"), icon: ScrollText, group: "operation", show: true, disabled: false },
     { value: "commands", label: t("commands"), icon: Terminal, group: "operation", show: showCommandsTab, disabled: !isServerRunning },
-    { value: "files", label: t("files"), icon: FolderOpen, group: "operation", show: true, disabled: isServerRunning },
+    { value: "files", label: t("files"), icon: FolderOpen, group: "operation", show: true, disabled: false },
     { value: "metrics", label: t("metrics"), icon: Activity, group: "monitoring", show: true, disabled: false },
     { value: "tasks", label: t("tasks"), icon: Clock, group: "monitoring", show: true, disabled: false },
   ];
@@ -181,7 +181,7 @@ export const ServerConfigTabs: FC<ServerConfigTabsProps> = ({ serverId, config, 
 
   useEffect(() => {
     if (isServerRunning) {
-      const disabledTabs = ["type", "general", "resources", "bedrock", "addons", "mods", "plugins", "advanced", "files"];
+      const disabledTabs = ["type", "general", "resources", "bedrock", "addons", "mods", "plugins", "advanced"];
       if (disabledTabs.includes(activeTab)) {
         setActiveTab("logs");
       }

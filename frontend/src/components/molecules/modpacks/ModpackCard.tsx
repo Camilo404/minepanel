@@ -2,33 +2,43 @@
 
 import Image from "next/image";
 import { Download, Calendar, ExternalLink, Star, Sparkles } from "lucide-react";
-import { CurseForgeModpack, formatDownloadCount } from "@/services/curseforge/curseforge.service";
+import { formatDownloadCount } from "@/services/curseforge/curseforge.service";
+import {
+  NormalizedModpack,
+  getModpackImageUrl,
+  getModpackDownloadCount,
+  getModpackLatestGameVersion,
+  getModpackIsFeatured,
+  isCurseforgeModpack,
+} from "@/services/modpacks/modpacks.types";
 import { useLanguage } from "@/lib/hooks/useLanguage";
 import { FC, memo } from "react";
 
 interface ModpackCardProps {
-  readonly modpack: CurseForgeModpack;
-  readonly onSelect?: (modpack: CurseForgeModpack) => void;
+  readonly modpack: NormalizedModpack;
+  readonly onSelect?: (modpack: NormalizedModpack) => void;
 }
 
 const ModpackCard: FC<ModpackCardProps> = ({ modpack, onSelect }) => {
   const { t } = useLanguage();
 
-  const getLatestVersion = () => {
-    return modpack.latestFiles?.[0]?.gameVersions?.[0] || "N/A";
-  };
+  const imageUrl = getModpackImageUrl(modpack);
+  const downloadCount = getModpackDownloadCount(modpack);
+  const latestVersion = getModpackLatestGameVersion(modpack);
+  const isFeatured = getModpackIsFeatured(modpack);
+  const externalUrl = isCurseforgeModpack(modpack) ? modpack.links.websiteUrl : `https://modrinth.com/modpack/${modpack.slug}`;
 
   const handleExternalLink = (e: React.MouseEvent) => {
     e.stopPropagation();
-    window.open(modpack.links.websiteUrl, "_blank", "noopener,noreferrer");
+    window.open(externalUrl, "_blank", "noopener,noreferrer");
   };
 
   return (
     <div className="h-full animate-fade-in-up transition-transform duration-200 hover:-translate-y-1">
       <div className="mc-panel group relative flex h-full flex-col overflow-hidden">
         <div className="relative h-40 w-full overflow-hidden" style={{ borderBottom: "3px solid var(--mc-frame)" }}>
-          {modpack.logo?.url ? (
-            <Image src={modpack.logo.url} alt={modpack.name} fill className="object-cover transition-transform duration-300 group-hover:scale-105" sizes="400px" />
+          {imageUrl ? (
+            <Image src={imageUrl} alt={modpack.name} fill className="object-cover transition-transform duration-300 group-hover:scale-105" sizes="400px" />
           ) : (
             <div className="flex h-full items-center justify-center bg-[var(--mc-stone-deep)]">
               <Image src="/images/grass.webp" alt="Default" width={64} height={64} className="pixelated opacity-40" />
@@ -37,7 +47,7 @@ const ModpackCard: FC<ModpackCardProps> = ({ modpack, onSelect }) => {
 
           <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
 
-          {modpack.isFeatured && (
+          {isFeatured && (
             <span className="mc-tag absolute right-2 top-2 flex items-center bg-yellow-500 text-[10px] font-bold text-black px-2 py-0.5">
               <Star className="mr-1 h-3 w-3 fill-black" />
               {t("featured")}
@@ -46,7 +56,7 @@ const ModpackCard: FC<ModpackCardProps> = ({ modpack, onSelect }) => {
 
           <span className="mc-tag absolute bottom-2 left-2 flex items-center bg-emerald-600 text-[10px] font-semibold text-white px-2 py-0.5">
             <Download className="mr-1 h-3 w-3" />
-            {formatDownloadCount(modpack.downloadCount)}
+            {formatDownloadCount(downloadCount ?? 0)}
           </span>
         </div>
 
@@ -57,7 +67,7 @@ const ModpackCard: FC<ModpackCardProps> = ({ modpack, onSelect }) => {
 
           <div className="flex items-center gap-2 text-xs text-gray-500">
             <Calendar className="h-3 w-3" />
-            <span>{getLatestVersion()}</span>
+            <span>{latestVersion}</span>
           </div>
 
           <div className="mt-auto flex gap-2">

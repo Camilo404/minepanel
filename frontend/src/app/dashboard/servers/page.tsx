@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Loader2, Trash2, Settings as SettingsIcon, Zap, LayoutTemplate, Check, Coffee, Smartphone } from "lucide-react";
+import { Plus, Loader2, Trash2, Settings as SettingsIcon, Zap, LayoutTemplate, Check, Coffee, Smartphone, Package, ExternalLink, ArrowRight } from "lucide-react";
 import { fetchServerList, createServer, getAllServersStatus, deleteServer } from "@/services/docker/fetchs";
 import { mcToast } from "@/lib/utils/minecraft-toast";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -108,6 +108,8 @@ export default function Dashboard() {
   );
 
   const fetchServersFromBackend = useCallback(async () => {
+    if (fetchInFlightRef.current) return;
+    fetchInFlightRef.current = true;
     setIsLoading(true);
     try {
       const serverList = await fetchServerList();
@@ -128,11 +130,19 @@ export default function Dashboard() {
       console.error("Error fetching server list:", error);
       mcToast.error(t("errorLoadingServerList"));
     } finally {
+      fetchInFlightRef.current = false;
       setIsLoading(false);
     }
   }, [t, processServerStatuses]);
 
   const refreshGlobalServers = useServersStore((state) => state.refreshAll);
+
+  const serversRef = useRef<ServerInfo[]>([]);
+  useEffect(() => {
+    serversRef.current = servers;
+  }, [servers]);
+
+  const fetchInFlightRef = useRef(false);
 
   const handleDeleteServer = async (serverId: string) => {
     setIsDeletingServer(serverId);
@@ -155,15 +165,16 @@ export default function Dashboard() {
   };
 
   const loadServerInfo = useCallback(async () => {
-    if (servers.length === 0) return;
+    const currentServers = serversRef.current;
+    if (currentServers.length === 0) return;
     try {
-      const updatedServers = await processServerStatuses(servers);
+      const updatedServers = await processServerStatuses(currentServers);
       setServers(updatedServers);
     } catch (error) {
       console.error("Error loading server information:", error);
       mcToast.error(t("errorLoadingServerInfo"));
     }
-  }, [servers, t, processServerStatuses]);
+  }, [t, processServerStatuses]);
 
   const handleCreateServer = async (values: { id: string }) => {
     setIsCreatingServer(true);
@@ -218,7 +229,7 @@ export default function Dashboard() {
   return (
     <div className="space-y-6">
       <div className="mc-panel animate-fade-in-up">
-        <div className="mc-titlebar flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-4 py-3">
+        <div className="mc-titlebar flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3">
           <div className="flex items-center gap-3">
             <Image src="/images/command-block.webp" alt="Dashboard" width={32} height={32} className="pixelated animate-float" />
             <div>
@@ -246,7 +257,7 @@ export default function Dashboard() {
               </button>
             </DialogTrigger>
           ) : null}
-          <DialogContent className="sm:max-w-[600px] bg-gray-900 border-gray-700 text-white max-h-[85vh] overflow-hidden flex flex-col">
+          <DialogContent className="sm:max-w-[560px] bg-gray-900 border-gray-700 text-white max-h-[85vh] overflow-hidden flex flex-col">
             <DialogHeader>
               <DialogTitle className="font-minecraft">{t("createNewServer")}</DialogTitle>
               <DialogDescription className="text-gray-400">{t("chooseCreationMethod")}</DialogDescription>
@@ -274,32 +285,93 @@ export default function Dashboard() {
             <Form {...form}>
               <form onSubmit={form.handleSubmit(handleCreateServer)} className="space-y-4 flex-1 overflow-hidden flex flex-col">
                 {createMode === "template" && (
-                  <div className="flex-1 overflow-y-auto pr-2 space-y-2">
-                    <p className="text-sm text-gray-400 mb-2">{t("selectTemplate")}</p>
-                    <div className="grid grid-cols-2 gap-2">
-                      {availableTemplates.map((template) => (
-                        <button key={template.id} type="button" onClick={() => setSelectedTemplate(template)} className={`p-3 rounded-lg border text-left transition-all ${selectedTemplate?.id === template.id ? "border-emerald-500 bg-emerald-900/30" : "border-gray-700 bg-gray-800/50 hover:border-gray-600"}`}>
-                          <div className="flex items-start gap-2">
-                            <Image src={`/images/${template.icon}.webp`} alt={template.name} width={24} height={24} className="mt-0.5" />
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2">
-                                <span className="font-minecraft text-sm text-white">{t(template.name as TranslationKey)}</span>
-                                {selectedTemplate?.id === template.id && <Check className="h-4 w-4 text-emerald-400" />}
-                              </div>
-                              <p className="text-xs text-gray-400 mt-0.5 line-clamp-2">{t(template.description as TranslationKey)}</p>
-                              <div className="flex gap-1 mt-1">
-                                <Badge variant="outline" className="text-[10px] px-1 py-0 border-gray-600 text-gray-300 bg-gray-800/50">
-                                  {template.config.serverType}
-                                </Badge>
-                                <Badge variant="outline" className="text-[10px] px-1 py-0 border-gray-600 text-gray-300 bg-gray-800/50">
-                                  {template.config.gameMode}
-                                </Badge>
-                              </div>
-                            </div>
+                  <div className="flex-1 overflow-y-auto pr-2 space-y-3">
+                    <p className="text-sm text-gray-400">{t("selectTemplate")}</p>
+
+                    {/* Browse Modpacks callout */}
+                    <Link
+                      href="/dashboard/templates"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-start gap-3 p-3 rounded-lg border border-purple-700/40 bg-purple-900/15 hover:bg-purple-900/25 hover:border-purple-600/60 transition-all group"
+                    >
+                      <Package className="h-5 w-5 text-purple-300 mt-0.5 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="font-minecraft text-sm text-purple-200">{t("browseModpacks")}</p>
+                        <p className="text-xs text-gray-400 mt-0.5">{t("browseModpacksDesc")}</p>
+                      </div>
+                      <ExternalLink className="h-4 w-4 text-purple-300 opacity-60 group-hover:opacity-100 shrink-0 mt-0.5" />
+                    </Link>
+
+                    {(["vanilla", "paper", "fabric", "forge", "neoforge", "modpack", "specialty"] as const).map((category) => {
+                      const groupTemplates = availableTemplates.filter((tpl) => (tpl.category ?? "vanilla") === category);
+                      if (groupTemplates.length === 0) return null;
+                      const categoryLabel = `templateCategory${category.charAt(0).toUpperCase() + category.slice(1)}` as TranslationKey;
+                      return (
+                        <div key={category}>
+                          <p className="text-[11px] font-minecraft text-gray-400 uppercase tracking-wider mb-1.5">
+                            {t(categoryLabel)}
+                          </p>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            {groupTemplates.map((template) => {
+                              const isSelected = selectedTemplate?.id === template.id;
+                              const isModpack = template.requiresModpack;
+                              return (
+                                <button
+                                  key={template.id}
+                                  type="button"
+                                  onClick={() => setSelectedTemplate(template)}
+                                  className={`p-3 rounded-lg border text-left transition-all ${
+                                    isSelected
+                                      ? isModpack
+                                        ? "border-purple-500 bg-purple-900/30"
+                                        : "border-emerald-500 bg-emerald-900/30"
+                                      : isModpack
+                                        ? "border-purple-700/40 bg-gray-800/50 hover:border-purple-500/60"
+                                        : "border-gray-700 bg-gray-800/50 hover:border-gray-600"
+                                  }`}
+                                >
+                                  <div className="flex items-start gap-2">
+                                    <Image src={`/images/${template.icon}.webp`} alt={template.name} width={24} height={24} className="mt-0.5" />
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-center gap-2">
+                                        <span className="font-minecraft text-sm text-white">{t(template.name as TranslationKey)}</span>
+                                        {isSelected && <Check className="h-4 w-4 text-emerald-400" />}
+                                      </div>
+                                      <p className="text-xs text-gray-400 mt-0.5 line-clamp-2">
+                                {template.id === "modrinth-modpack"
+                                  ? t("createServerModrinthModpackDesc")
+                                  : template.id === "curseforge-modpack"
+                                    ? t("createServerCurseforgeModpackDesc")
+                                    : t(template.description as TranslationKey)}
+                              </p>
+                                      <div className="flex gap-1 mt-1 flex-wrap">
+                                        <Badge variant="outline" className="text-[10px] px-1 py-0 border-gray-600 text-gray-300 bg-gray-800/50">
+                                          {template.config.serverType}
+                                        </Badge>
+                                        {template.config.gameMode && (
+                                          <Badge variant="outline" className="text-[10px] px-1 py-0 border-gray-600 text-gray-300 bg-gray-800/50">
+                                            {template.config.gameMode}
+                                          </Badge>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                </button>
+                              );
+                            })}
                           </div>
-                        </button>
-                      ))}
-                    </div>
+                        </div>
+                      );
+                    })}
+
+                    {/* Contextual note for modpack templates */}
+                    {selectedTemplate?.requiresModpack && (
+                      <div className="bg-amber-900/15 border border-amber-700/40 rounded-lg p-3 text-xs text-amber-200 flex gap-2">
+                        <ArrowRight className="h-4 w-4 shrink-0 mt-0.5" />
+                        <p>{t("modpackNextStep")}</p>
+                      </div>
+                    )}
                   </div>
                 )}
 

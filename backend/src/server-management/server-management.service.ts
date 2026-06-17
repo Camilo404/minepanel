@@ -16,10 +16,10 @@ const execAsync = promisify(exec);
 
 const DOCKER_COMMANDS = {
   COMPOSE_DOWN: 'docker compose down',
+  COMPOSE_DOWN_RM: 'docker compose down --remove-orphans',
   COMPOSE_UP: 'docker compose up -d',
-  COMPOSE_PS_SERVICE: 'docker compose ps -aq mc',
-  PS_FILTER: (serverId: string) => `docker ps -a --filter "name=^/${serverId}$" --format "{{.ID}}"`,
-  PS_PARTIAL: (serverId: string) => `docker ps -a --filter "name=${serverId}" --format "{{.ID}}"`,
+  COMPOSE_PS: 'docker compose ps -aq',
+  PS_PARTIAL: (_serverId: string) => `docker ps -a --format "{{.ID}}\\t{{.Names}}"`,
   INSPECT_STATUS: (containerId: string) => `docker inspect --format="{{.State.Status}}" ${containerId}`,
   STATS_CPU: (containerId: string) => `docker stats ${containerId} --no-stream --format "{{.CPUPerc}}"`,
   STATS_MEM: (containerId: string) => `docker stats ${containerId} --no-stream --format "{{.MemUsage}}"`,
@@ -282,8 +282,12 @@ export class ServerManagementService {
   }
 
   private getComposeProjectName(serverId: string): string | undefined {
-    if (!this.COMPOSE_PROJECT) return undefined;
-    return `${this.COMPOSE_PROJECT.toLowerCase()}_${serverId.toLowerCase()}`;
+    const project = this.COMPOSE_PROJECT?.trim();
+    
+    if (!project || !/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(project)) {
+      return undefined;
+    }
+    return `${project.toLowerCase()}_${serverId.toLowerCase()}`;
   }
 
   private getComposeExecOptions(serverId: string): ExecOptions {
@@ -642,37 +646,44 @@ export class ServerManagementService {
     const dockerComposePath = this.getDockerComposePath(serverId);
     if (await fs.pathExists(dockerComposePath)) {
       try {
-        const { stdout } = await this.execComposeCommand(serverId, DOCKER_COMMANDS.COMPOSE_PS_SERVICE);
-        const composeContainerIds = stdout
+        const { stdout } = await this.execComposeCommand(serverId, DOCKER_COMMANDS.COMPOSE_PS);
+        const ids = stdout
           .toString()
           .trim()
           .split('\n')
-          .filter((id) => id.trim());
+          .map((s) => s.trim())
+          .filter(Boolean);
 
-        if (composeContainerIds.length > 0) {
-          if (composeContainerIds.length > 1) {
-            this.logger.warn(`Multiple compose containers found for server "${serverId}". Using first: ${composeContainerIds[0]}`);
+        if (ids.length > 0) {
+          if (ids.length > 1) {
+            this.logger.warn(`Multiple compose containers found for server "${serverId}". Using first: ${ids[0]}`);
           }
-          return composeContainerIds[0];
+          return ids[0];
         }
       } catch (error) {
-        this.logger.warn(`Could not resolve compose container for server ${serverId}, using legacy fallback`, error);
+        this.logger.warn(`Could not resolve compose container for server ${serverId}, using name fallback`, error);
       }
     }
 
-    const { stdout } = await execAsync(DOCKER_COMMANDS.PS_FILTER(serverId));
-    if (stdout.trim()) {
-      const containerIds = stdout
-        .trim()
-        .split('\n')
-        .filter((id) => id.trim());
-      if (containerIds.length > 1) {
-        this.logger.warn(`Multiple exact matches found for server "${serverId}". Using first: ${containerIds[0]}. ` + `Found: ${containerIds.join(', ')}`);
+    const { stdout } = await execAsync(DOCKER_COMMANDS.PS_PARTIAL(serverId));
+    const idLower = serverId.toLowerCase();
+    const lines = stdout
+      .toString()
+      .trim()
+      .split('\n')
+      .map((line) => line.split('\t'))
+      .filter((parts) => parts[0] && parts[1]);
+    const match = lines.find(([, name]) => {
+      const n = name.toLowerCase();
+      return n === `/${idLower}` || n.startsWith(`${idLower}-`);
+    });
+    if (match) {
+      if (lines.length > 1) {
+        this.logger.warn(`Multiple name matches for server "${serverId}". Using first: ${match[0]}. Found: ${lines.map((l) => l[1]).join(', ')}`);
       }
-      return containerIds[0];
+      return match[0];
     }
 
-    this.logger.debug(`No container found with exact name matching "${serverId}"`);
     return '';
   }
 
@@ -1413,9 +1424,11 @@ export class ServerManagementService {
         await this.fixBedrockPermissions(serverId);
       }
 
-      if ((await this.getServerStatus(serverId)) !== 'not_found') {
-        await this.execComposeCommand(serverId, DOCKER_COMMANDS.COMPOSE_DOWN);
-      }
+      // ponytail: always clean up before up. Previous status gate lied when
+      // findContainerId missed a compose-suffixed name, leaving orphans that
+      // the next `up -d` would conflict with. --remove-orphans kills strays
+      // from prior compose runs so the fresh container can claim its name.
+      await this.execComposeCommand(serverId, DOCKER_COMMANDS.COMPOSE_DOWN_RM);
 
       await this.execComposeCommand(serverId, DOCKER_COMMANDS.COMPOSE_UP);
 

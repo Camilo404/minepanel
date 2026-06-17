@@ -166,8 +166,8 @@ export const getPopularModpacks = async (limit: number = 10): Promise<CurseForge
 
 export const getModpack = async (id: number): Promise<CurseForgeModpack> => {
   try {
-    const response = await api.get<CurseForgeModResponse>(`/curseforge/${id}`);
-    return response.data.data;
+    const response = await api.get<CurseForgeModpack>(`/curseforge/${id}`);
+    return response.data;
   } catch (error) {
     console.error("Error fetching modpack:", error);
     throw error;

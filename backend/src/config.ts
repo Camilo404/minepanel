@@ -30,9 +30,9 @@ export default () => ({
     pass: process.env.SMTP_PASS,
     from: process.env.SMTP_FROM,
   },
-  serversDir: '/app/servers',
+  serversDir: process.env.SERVERS_DIR || '/app/servers',
   baseDir: process.env.BASE_DIR || '/app',
   database: {
-    path: '/app/data/minepanel.db',
+    path: process.env.DATABASE_PATH || '/app/data/minepanel.db',
   },
 });

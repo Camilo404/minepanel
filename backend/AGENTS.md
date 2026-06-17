@@ -117,7 +117,12 @@ Files module behavior:
 
 - `serverId="_root"` maps to `/app/servers` in files API.
 - `serverId=".world"` maps to `/app/servers/.world/worlds` in files API.
-- Other server IDs map to `/app/servers/<serverId>/mc-data`.
+- Other server IDs map to `/app/servers/<serverId>/mc-data` by default.
+- If the canonical `mc-data` folder is empty, `FilesService.getBasePath` falls
+  back to the `/data` bind mount declared in the server's `docker-compose.yml`
+  (resolved relative to the compose file's directory). This handles historical
+  compose files written with non-absolute relative host paths
+  (e.g. `..\servers\<id>\mc-data`) whose data actually lives one level deeper.
 - Preserve traversal protection (`normalize` + `startsWith(basePath)`).
 
 Data migration and compatibility:

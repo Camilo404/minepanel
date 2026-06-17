@@ -33,6 +33,7 @@ jest.mock('node:util', () => {
 // Import after mocks
 import { ServerManagementService } from './server-management.service';
 import * as fs from 'fs-extra';
+import * as path from 'node:path';
 
 // Get the mocked promisify result
 const mockExec = jest.requireMock('node:util').promisify();
@@ -139,21 +140,53 @@ describe('ServerManagementService', () => {
 
       expect(containerId).toBe('compose123');
       expect(mockExec).toHaveBeenCalledWith(
-        expect.stringContaining('docker compose ps -aq mc'),
-        expect.objectContaining({ cwd: '/app/servers/myserver' }),
+        expect.stringContaining('docker compose ps -aq'),
+        expect.objectContaining({ cwd: path.join(SERVERS_DIR, 'myserver') }),
       );
     });
 
-    it('should fallback to legacy exact name lookup when compose lookup fails', async () => {
+    it('should fall back to name prefix lookup when compose lookup fails', async () => {
       (fs.pathExists as jest.Mock).mockResolvedValue(true);
       mockExec
         .mockRejectedValueOnce(new Error('compose unavailable'))
-        .mockResolvedValueOnce({ stdout: 'legacy123\n', stderr: '' });
+        .mockResolvedValueOnce({ stdout: 'legacy123\tmyserver-mc-1\n', stderr: '' });
 
       const containerId = await (service as any).findContainerId('myserver');
 
       expect(containerId).toBe('legacy123');
-      expect(mockExec).toHaveBeenCalledWith(expect.stringContaining('name=^/myserver$'));
+    });
+
+    it('should not match a different server with a similar prefix', async () => {
+      (fs.pathExists as jest.Mock).mockResolvedValue(false);
+      mockExec.mockResolvedValueOnce({ stdout: 'other123\tmyserver2-mc-1\n', stderr: '' });
+
+      const containerId = await (service as any).findContainerId('myserver');
+
+      expect(containerId).toBe('');
+    });
+  });
+
+  describe('getComposeProjectName', () => {
+    it('should return undefined for empty / junk COMPOSE_PROJECT', () => {
+      (service as any).COMPOSE_PROJECT = '';
+      expect((service as any).getComposeProjectName('survival')).toBeUndefined();
+
+      // .env inline comments leak junk like "  # Optional prefix..."
+      (service as any).COMPOSE_PROJECT = '  # Optional prefix for server compose';
+      expect((service as any).getComposeProjectName('survival')).toBeUndefined();
+    });
+
+    it('should return undefined for invalid compose naming', () => {
+      (service as any).COMPOSE_PROJECT = 'has spaces';
+      expect((service as any).getComposeProjectName('survival')).toBeUndefined();
+
+      (service as any).COMPOSE_PROJECT = '-starts-with-dash';
+      expect((service as any).getComposeProjectName('survival')).toBeUndefined();
+    });
+
+    it('should lowercase and concatenate for valid COMPOSE_PROJECT', () => {
+      (service as any).COMPOSE_PROJECT = 'MinePanel';
+      expect((service as any).getComposeProjectName('Survival')).toBe('minepanel_survival');
     });
   });
 

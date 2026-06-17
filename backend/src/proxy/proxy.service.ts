@@ -38,7 +38,7 @@ export class ProxyService {
   ) {
     this.SERVERS_DIR = this.configService.get('serversDir');
     // Use /app/data for files written by backend (not BASE_DIR which is for host paths)
-    this.PROXY_DIR = '/app/data/proxy';
+    this.PROXY_DIR = process.env.PROXY_DIR || '/app/data/proxy';
     this.ROUTES_FILE = path.join(this.PROXY_DIR, 'routes.json');
   }
 

@@ -26,6 +26,8 @@ export function useServerStatus(serverId: string) {
       return data.status;
     } catch (error) {
       console.error("Error fetching server status:", error);
+      setStatus("not_found");
+      setServerStatus(serverId, "not_found");
       return "error";
     }
   }, [serverId, setServerStatus]);

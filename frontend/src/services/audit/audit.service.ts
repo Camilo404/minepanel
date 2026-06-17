@@ -23,6 +23,9 @@ export interface AuditLogFilters {
 }
 
 export const getAuditLogs = async (filters: AuditLogFilters = {}): Promise<AuditLog[]> => {
-  const response = await api.get('/audit', { params: filters });
+  const cleanParams = Object.fromEntries(
+    Object.entries(filters).filter(([, v]) => v !== undefined && v !== null && v !== ""),
+  );
+  const response = await api.get('/audit', { params: cleanParams });
   return response.data;
 };

@@ -22,9 +22,7 @@ export interface UploadOptions {
 
 export const filesService = {
   async listFiles(serverId: string, path: string = ""): Promise<FileItem[]> {
-    const { data } = await api.get(`/files/${serverId}/list`, {
-      params: { path },
-    });
+    const { data } = await api.get(`/files/${serverId}/list`, { params: { path } });
     return data;
   },
 
