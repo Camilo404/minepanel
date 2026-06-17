@@ -104,6 +104,32 @@ describe('FilesService', () => {
       expect(names).toContain('survival.dat');
     });
 
+    it('falls back to nested .world/worlds when canonical is empty', async () => {
+      const canonical = path.join(serversDir, '.world', 'worlds');
+      const alternate = path.join(serversDir, 'servers', '.world', 'worlds');
+      await fs.ensureDir(canonical); // intentionally empty
+      await fs.ensureDir(alternate);
+      await fs.writeFile(path.join(alternate, 'shared-world.dat'), 'fake');
+
+      const items = await service.listFiles('.world');
+      const names = items.map((i) => i.name);
+      expect(names).toContain('shared-world.dat');
+    });
+
+    it('keeps canonical .world/worlds when it has content', async () => {
+      const canonical = path.join(serversDir, '.world', 'worlds');
+      const alternate = path.join(serversDir, 'servers', '.world', 'worlds');
+      await fs.ensureDir(canonical);
+      await fs.writeFile(path.join(canonical, 'from-canonical.dat'), 'x');
+      await fs.ensureDir(alternate);
+      await fs.writeFile(path.join(alternate, 'from-nested.dat'), 'y');
+
+      const items = await service.listFiles('.world');
+      const names = items.map((i) => i.name);
+      expect(names).toContain('from-canonical.dat');
+      expect(names).not.toContain('from-nested.dat');
+    });
+
     it('skips named volumes and only follows host-path mounts', async () => {
       const serverId = 'named';
       const canonical = path.join(serversDir, serverId, 'mc-data');

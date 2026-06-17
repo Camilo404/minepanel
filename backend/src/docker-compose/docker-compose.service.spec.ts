@@ -231,4 +231,46 @@ describe('DockerComposeService', () => {
       expect(parsed.services.mc.labels['minepanel.proxy.enabled']).toBe('true');
     });
   });
+
+  describe('parseVolumes (volume host-path normalization)', () => {
+    const path = require('path') as typeof import('path');
+    const invoke = (dockerVolumes: string, serverId = 'srv') =>
+      (service as any).parseVolumes({ ...(service as any).createDefaultConfig(serverId), dockerVolumes });
+
+    it('expands ./mc-data to an absolute path under servers/<id>', () => {
+      const out = invoke('./mc-data:/data');
+      expect(out[0]).toBe(path.join(BASE_DIR, 'servers', 'srv', 'mc-data') + ':/data');
+    });
+
+    it('expands .\\mc-data (Windows separator) to an absolute path under servers/<id>', () => {
+      const out = invoke('.\\mc-data:/data');
+      expect(out[0]).toBe(path.join(BASE_DIR, 'servers', 'srv', 'mc-data') + ':/data');
+    });
+
+    it('rewrites legacy "..\\servers\\<id>\\mc-data" style paths to absolute', () => {
+      const out = invoke('..\\servers\\srv\\mc-data:/data');
+      expect(out[0]).toBe(path.join(BASE_DIR, 'servers', 'srv', 'mc-data') + ':/data');
+    });
+
+    it('rewrites legacy "../servers/<id>/mc-data" (POSIX) style paths to absolute', () => {
+      const out = invoke('../servers/srv/mc-data:/data');
+      expect(out[0]).toBe(path.join(BASE_DIR, 'servers', 'srv', 'mc-data') + ':/data');
+    });
+
+    it('keeps already-absolute Windows paths unchanged', () => {
+      const out = invoke('C:/data/srv/mc-data:/data');
+      expect(out[0]).toBe('C:/data/srv/mc-data:/data');
+    });
+
+    it('keeps named volumes unchanged (no host path rewrite)', () => {
+      const out = invoke('mc-data:/data\nnamed-vol:/cache');
+      expect(out[0]).toBe('mc-data:/data');
+      expect(out[1]).toBe('named-vol:/cache');
+    });
+
+    it('preserves container mount options like :ro', () => {
+      const out = invoke('./modpacks:/modpacks:ro');
+      expect(out[0]).toBe(path.join(BASE_DIR, 'servers', 'srv', 'modpacks') + ':/modpacks:ro');
+    });
+  });
 });

@@ -1143,16 +1143,7 @@ export class DockerComposeService {
     const volumes = config.dockerVolumes
       .split('\n')
       .filter((line) => line.trim())
-      .map((line) => {
-        const volume = line.trim();
-        if (volume.startsWith('./')) {
-          const [hostPath, ...containerParts] = volume.split(':');
-          const containerPath = containerParts.join(':');
-          const absoluteHostPath = path.join(this.BASE_DIR, 'servers', config.id, hostPath.substring(2));
-          return `${absoluteHostPath}:${containerPath}`;
-        }
-        return volume;
-      })
+      .map((line) => this.normalizeVolumeHostPath(line.trim(), config.id))
       .map((volume) => this.enforceReadOnlyWorldLibraryMount(volume));
 
     const edition = config.edition ?? 'JAVA';
@@ -1206,6 +1197,36 @@ export class DockerComposeService {
       return mountTarget === '/data/.world-library/global' || mountTarget === '/worlds/global';
     }
     return mountTarget === target;
+  }
+
+  private normalizeVolumeHostPath(volume: string, serverId: string): string {
+    const parts = volume.split(':');
+    if (parts.length < 2) return volume;
+
+    const host = parts[0];
+    const containerParts = parts.slice(1);
+
+    const looksLikePath = host.startsWith('/') || host.startsWith('.') || /^[A-Za-z]:[\\/]/.test(host);
+    if (!looksLikePath) return volume;
+
+    let absoluteHostPath: string;
+    if (host.startsWith('./') || host.startsWith('.\\')) {
+      absoluteHostPath = path.join(this.BASE_DIR, 'servers', serverId, host.substring(2));
+    } else if (host.startsWith('../') || host.startsWith('..\\')) {
+      const escapedId = serverId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const legacyPattern = new RegExp(`^\\.\\.[\\\\/]servers[\\\\/]${escapedId}(?:[\\\\/](.+))?$`);
+      const legacyMatch = host.match(legacyPattern);
+      if (legacyMatch) {
+        const rest = legacyMatch[1] ?? '';
+        absoluteHostPath = path.join(this.BASE_DIR, 'servers', serverId, rest);
+      } else {
+        absoluteHostPath = path.join(this.BASE_DIR, host.replace(/^\.\.[\\/]/, ''));
+      }
+    } else {
+      absoluteHostPath = host;
+    }
+
+    return [absoluteHostPath, ...containerParts].join(':');
   }
 
   private async ensurePortAvailable(config: ServerConfig, proxyEnabled = false): Promise<string> {

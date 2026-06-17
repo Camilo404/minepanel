@@ -117,12 +117,20 @@ Files module behavior:
 
 - `serverId="_root"` maps to `/app/servers` in files API.
 - `serverId=".world"` maps to `/app/servers/.world/worlds` in files API.
+  When that canonical folder is empty, `FilesService.getBasePath` also
+  checks `<serversDir>/servers/.world/worlds`, which is where compose
+  files using `..\servers\.world\worlds:/data/.world-library/global:ro`
+  land on the host.
 - Other server IDs map to `/app/servers/<serverId>/mc-data` by default.
 - If the canonical `mc-data` folder is empty, `FilesService.getBasePath` falls
   back to the `/data` bind mount declared in the server's `docker-compose.yml`
   (resolved relative to the compose file's directory). This handles historical
   compose files written with non-absolute relative host paths
   (e.g. `..\servers\<id>\mc-data`) whose data actually lives one level deeper.
+- When listing through `_root`, navigating into `<serverId>/mc-data[/...]` also
+  triggers the same compose-based redirect so the global file browser can reach
+  the actual data without the user manually drilling into the nested
+  `servers/` folder.
 - Preserve traversal protection (`normalize` + `startsWith(basePath)`).
 
 Data migration and compatibility:
