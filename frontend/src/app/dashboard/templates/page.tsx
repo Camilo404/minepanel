@@ -9,16 +9,31 @@ import { ModpackSearch } from "@/components/organisms/ModpackSearch";
 import { ModpackDetailsModalEnhanced } from "@/components/molecules/modpacks/ModpackDetailsModalEnhanced";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CurseForgeModpack, searchModpacks, getFeaturedModpacks, getPopularModpacks } from "@/services/curseforge/curseforge.service";
+import { searchModrinthModpacks, getModrinthModpack, type ModrinthModpack, type ModrinthIndex } from "@/services/modrinth/modrinth.service";
+import { NormalizedModpack, isModrinthModpack } from "@/services/modpacks/modpacks.types";
 import { mcToast } from "@/lib/utils/minecraft-toast";
+
+type Provider = "curseforge" | "modrinth";
+
+const MODPACK_INDEX_MAP: Record<number, ModrinthIndex> = {
+  1: "follows",
+  2: "downloads",
+  3: "updated",
+  4: "relevance",
+  6: "downloads",
+};
+
+const DEFAULT_MODRITH_INDEX: ModrinthIndex = "downloads";
 
 export default function TemplatesPage() {
   const { t } = useLanguage();
-  const [modpacks, setModpacks] = useState<CurseForgeModpack[]>([]);
-  const [featuredModpacks, setFeaturedModpacks] = useState<CurseForgeModpack[]>([]);
+  const [provider, setProvider] = useState<Provider>("curseforge");
+  const [items, setItems] = useState<NormalizedModpack[]>([]);
+  const [featuredItems, setFeaturedItems] = useState<NormalizedModpack[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSearching, setIsSearching] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const [selectedModpack, setSelectedModpack] = useState<CurseForgeModpack | null>(null);
+  const [selectedModpack, setSelectedModpack] = useState<NormalizedModpack | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("popular");
   const [pagination, setPagination] = useState({
@@ -31,25 +46,42 @@ export default function TemplatesPage() {
 
   const observerTarget = useRef<HTMLDivElement>(null);
 
+  const stampProvider = useCallback(
+    (modpack: CurseForgeModpack | ModrinthModpack): NormalizedModpack =>
+      ({ ...modpack, provider } as NormalizedModpack),
+    [provider],
+  );
+
   const loadInitialData = useCallback(async () => {
     setIsLoading(true);
     setError(null);
 
     try {
-      const [popularResponse, featuredResponse] = await Promise.all([getPopularModpacks(18), getFeaturedModpacks(12)]);
-
-      setModpacks(popularResponse.data);
-      setFeaturedModpacks(featuredResponse.data);
-      setPagination({
-        index: popularResponse.pagination.index,
-        pageSize: popularResponse.pagination.pageSize,
-        totalCount: popularResponse.pagination.totalCount,
-      });
+      if (provider === "curseforge") {
+        const [popularResponse, featuredResponse] = await Promise.all([getPopularModpacks(18), getFeaturedModpacks(12)]);
+        setItems(popularResponse.data.map(stampProvider));
+        setFeaturedItems(featuredResponse.data.map(stampProvider));
+        setPagination({
+          index: popularResponse.pagination.index,
+          pageSize: popularResponse.pagination.pageSize,
+          totalCount: popularResponse.pagination.totalCount,
+        });
+      } else {
+        const popularResponse = await searchModrinthModpacks({ limit: 18, index: DEFAULT_MODRITH_INDEX });
+        setItems(popularResponse.data.map((m) => stampProvider(m as ModrinthModpack)));
+        setFeaturedItems(popularResponse.data.slice(0, 12).map((m) => stampProvider(m as ModrinthModpack)));
+        setPagination({
+          index: popularResponse.pagination.index,
+          pageSize: popularResponse.pagination.pageSize,
+          totalCount: popularResponse.pagination.totalCount,
+        });
+      }
     } catch (err) {
       console.error("Error loading modpacks:", err);
-      const errorMessage = err instanceof Error ? err.message : "Unknown error";
+      const backendMessage =
+        (err as any)?.response?.data?.message ?? (err instanceof Error ? err.message : "Unknown error");
 
-      if (errorMessage.includes("API key") || errorMessage.includes("403")) {
+      if (provider === "curseforge" && (backendMessage.includes("API key") || backendMessage.includes("403"))) {
         setError(t("curseforgeApiKeyNotConfigured"));
       } else {
         setError(t("errorLoadingModpacks"));
@@ -58,9 +90,15 @@ export default function TemplatesPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [t]);
+  }, [provider, t, stampProvider]);
 
   useEffect(() => {
+    setItems([]);
+    setFeaturedItems([]);
+    setPagination({ index: 0, pageSize: 20, totalCount: 0 });
+    setSelectedModpack(null);
+    setActiveTab("popular");
+    setSearchQuery("");
     loadInitialData();
   }, [loadInitialData]);
 
@@ -71,13 +109,24 @@ export default function TemplatesPage() {
     setSearchSort({ field: sortField, order: sortOrder });
 
     try {
-      const response = await searchModpacks(query, 18, 0, sortField, sortOrder);
-      setModpacks(response.data);
-      setPagination({
-        index: response.pagination.index,
-        pageSize: response.pagination.pageSize,
-        totalCount: response.pagination.totalCount,
-      });
+      if (provider === "curseforge") {
+        const response = await searchModpacks(query, 18, 0, sortField, sortOrder);
+        setItems(response.data.map(stampProvider));
+        setPagination({
+          index: response.pagination.index,
+          pageSize: response.pagination.pageSize,
+          totalCount: response.pagination.totalCount,
+        });
+      } else {
+        const mrIndex: ModrinthIndex = MODPACK_INDEX_MAP[sortField] ?? (query ? "relevance" : DEFAULT_MODRITH_INDEX);
+        const response = await searchModrinthModpacks({ q: query, limit: 18, offset: 0, index: mrIndex });
+        setItems(response.data.map((m) => stampProvider(m as ModrinthModpack)));
+        setPagination({
+          index: response.pagination.index,
+          pageSize: response.pagination.pageSize,
+          totalCount: response.pagination.totalCount,
+        });
+      }
       setActiveTab("search");
     } catch (err) {
       console.error("Error searching modpacks:", err);
@@ -88,20 +137,30 @@ export default function TemplatesPage() {
   };
 
   const loadMoreModpacks = useCallback(async () => {
-    if (isLoadingMore || modpacks.length >= pagination.totalCount) return;
+    if (isLoadingMore || items.length >= pagination.totalCount) return;
 
     setIsLoadingMore(true);
     try {
       const nextIndex = pagination.index + pagination.pageSize;
-      let response;
+      let response: { data: (CurseForgeModpack | ModrinthModpack)[]; pagination: { index: number; pageSize: number; resultCount: number; totalCount: number } };
 
-      if (activeTab === "search" && searchQuery) {
-        response = await searchModpacks(searchQuery, 18, nextIndex, searchSort.field, searchSort.order);
+      if (provider === "curseforge") {
+        if (activeTab === "search" && searchQuery) {
+          response = await searchModpacks(searchQuery, 18, nextIndex, searchSort.field, searchSort.order);
+        } else {
+          response = await searchModpacks("", 18, nextIndex, 2, "desc");
+        }
+        setItems((prev) => [...prev, ...(response.data as CurseForgeModpack[]).map(stampProvider)]);
       } else {
-        response = await searchModpacks("", 18, nextIndex, 2, "desc");
+        if (activeTab === "search" && searchQuery) {
+          const mrIndex: ModrinthIndex = MODPACK_INDEX_MAP[searchSort.field] ?? "relevance";
+          response = await searchModrinthModpacks({ q: searchQuery, limit: 18, offset: nextIndex, index: mrIndex });
+        } else {
+          response = await searchModrinthModpacks({ limit: 18, offset: nextIndex, index: DEFAULT_MODRITH_INDEX });
+        }
+        setItems((prev) => [...prev, ...(response.data as ModrinthModpack[]).map((m) => stampProvider(m))]);
       }
 
-      setModpacks((prev) => [...prev, ...response.data]);
       setPagination({
         index: response.pagination.index,
         pageSize: response.pagination.pageSize,
@@ -113,16 +172,34 @@ export default function TemplatesPage() {
     } finally {
       setIsLoadingMore(false);
     }
-  }, [isLoadingMore, modpacks.length, pagination, activeTab, searchQuery, searchSort, t]);
+  }, [isLoadingMore, items.length, pagination, activeTab, searchQuery, searchSort, provider, t, stampProvider]);
 
-  const handleSelectModpack = (modpack: CurseForgeModpack) => {
-    setSelectedModpack(modpack);
-  };
+  const handleSelectModpack = useCallback(
+    async (modpack: NormalizedModpack) => {
+      if (isModrinthModpack(modpack)) {
+        try {
+          const detail = await getModrinthModpack(modpack.slug);
+          setSelectedModpack({ ...detail, provider: "modrinth" });
+        } catch (err) {
+          console.warn("Failed to fetch Modrinth modpack detail, falling back to list data:", err);
+          setSelectedModpack(modpack);
+        }
+      } else {
+        setSelectedModpack(modpack);
+      }
+    },
+    [],
+  );
+
+  const observerStateRef = useRef({ loadMoreModpacks, isLoadingMore, isSearching });
+  observerStateRef.current = { loadMoreModpacks, isLoadingMore, isSearching };
 
   useEffect(() => {
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0].isIntersecting && !isLoadingMore && !isSearching) {
+        if (!entries[0].isIntersecting) return;
+        const { isLoadingMore, isSearching, loadMoreModpacks } = observerStateRef.current;
+        if (!isLoadingMore && !isSearching) {
           loadMoreModpacks();
         }
       },
@@ -135,11 +212,9 @@ export default function TemplatesPage() {
     }
 
     return () => {
-      if (currentTarget) {
-        observer.unobserve(currentTarget);
-      }
+      observer.disconnect();
     };
-  }, [loadMoreModpacks, isLoadingMore, isSearching]);
+  }, []);
 
   if (isLoading) {
     return (
@@ -182,6 +257,27 @@ export default function TemplatesPage() {
 
       {!error && (
         <>
+          <div className="animate-fade-in-up stagger-1 flex flex-wrap items-center gap-3">
+            <div className="mc-panel flex items-center gap-1 p-1">
+              <button
+                type="button"
+                onClick={() => setProvider("curseforge")}
+                className={`mc-btn px-4 py-1.5 text-xs ${provider === "curseforge" ? "mc-btn-emerald" : ""}`}
+                aria-pressed={provider === "curseforge"}
+              >
+                {t("providerCurseforge")}
+              </button>
+              <button
+                type="button"
+                onClick={() => setProvider("modrinth")}
+                className={`mc-btn px-4 py-1.5 text-xs ${provider === "modrinth" ? "mc-btn-emerald" : ""}`}
+                aria-pressed={provider === "modrinth"}
+              >
+                {t("providerModrinth")}
+              </button>
+            </div>
+          </div>
+
           <div className="animate-fade-in-up stagger-1">
             <ModpackSearch onSearch={handleSearch} isLoading={isSearching} />
           </div>
@@ -203,15 +299,15 @@ export default function TemplatesPage() {
             </TabsList>
 
             <TabsContent value="featured" className="mt-6">
-              {featuredModpacks.length === 0 ? (
+              {featuredItems.length === 0 ? (
                 <div className="text-center py-12">
                   <Image src="/images/barrier.webp" alt="No results" width={64} height={64} className="mx-auto opacity-50 mb-4" />
                   <p className="text-gray-400">{t("noModpacksFound")}</p>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-6">
-                  {featuredModpacks.map((modpack) => (
-                    <ModpackCard key={modpack.id} modpack={modpack} onSelect={handleSelectModpack} />
+                  {featuredItems.map((modpack) => (
+                    <ModpackCard key={getKey(modpack)} modpack={modpack} onSelect={handleSelectModpack} />
                   ))}
                 </div>
               )}
@@ -220,12 +316,12 @@ export default function TemplatesPage() {
             <TabsContent value="popular" className="mt-6">
               <div className="space-y-6">
                 <div className="grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-6">
-                  {modpacks.map((modpack) => (
-                    <ModpackCard key={modpack.id} modpack={modpack} onSelect={handleSelectModpack} />
+                  {items.map((modpack) => (
+                    <ModpackCard key={getKey(modpack)} modpack={modpack} onSelect={handleSelectModpack} />
                   ))}
                 </div>
 
-                {modpacks.length < pagination.totalCount && (
+                {items.length < pagination.totalCount && (
                   <div ref={observerTarget} className="flex justify-center py-8">
                     {isLoadingMore && (
                       <div className="flex items-center gap-2 text-emerald-400">
@@ -236,16 +332,16 @@ export default function TemplatesPage() {
                   </div>
                 )}
 
-                {modpacks.length >= pagination.totalCount && modpacks.length > 0 && (
+                {items.length >= pagination.totalCount && items.length > 0 && (
                   <div className="text-center py-4 text-gray-500 font-minecraft">
-                    {t("showing")} {modpacks.length} {t("of")} {pagination.totalCount} modpacks
+                    {t("showing")} {items.length} {t("of")} {pagination.totalCount} modpacks
                   </div>
                 )}
               </div>
             </TabsContent>
 
             <TabsContent value="search" className="mt-6">
-              {modpacks.length === 0 ? (
+              {items.length === 0 ? (
                 <div className="text-center py-12">
                   <Image src="/images/barrier.webp" alt="No results" width={64} height={64} className="mx-auto opacity-50 mb-4" />
                   <p className="text-gray-400">{t("noModpacksFound")}</p>
@@ -253,12 +349,12 @@ export default function TemplatesPage() {
               ) : (
                 <div className="space-y-6">
                   <div className="grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-6">
-                    {modpacks.map((modpack) => (
-                      <ModpackCard key={modpack.id} modpack={modpack} onSelect={handleSelectModpack} />
+                    {items.map((modpack) => (
+                      <ModpackCard key={getKey(modpack)} modpack={modpack} onSelect={handleSelectModpack} />
                     ))}
                   </div>
 
-                  {modpacks.length < pagination.totalCount && (
+                  {items.length < pagination.totalCount && (
                     <div ref={observerTarget} className="flex justify-center py-8">
                       {isLoadingMore && (
                         <div className="flex items-center gap-2 text-emerald-400">
@@ -269,9 +365,9 @@ export default function TemplatesPage() {
                     </div>
                   )}
 
-                  {modpacks.length >= pagination.totalCount && modpacks.length > 0 && (
+                  {items.length >= pagination.totalCount && items.length > 0 && (
                     <div className="text-center py-4 text-gray-500 font-minecraft">
-                      {t("showing")} {modpacks.length} {t("of")} {pagination.totalCount} modpacks
+                      {t("showing")} {items.length} {t("of")} {pagination.totalCount} modpacks
                     </div>
                   )}
                 </div>
@@ -296,4 +392,9 @@ export default function TemplatesPage() {
       </div>
     </div>
   );
+}
+
+function getKey(modpack: NormalizedModpack): string {
+  if (isModrinthModpack(modpack)) return `mr-${modpack.projectId}`;
+  return `cf-${modpack.id}`;
 }

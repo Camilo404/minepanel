@@ -12,8 +12,13 @@ export interface ModSearchItem {
   iconUrl?: string;
   downloads?: number;
   lastUpdated?: string;
+  dateCreated?: string;
   supportedVersions: string[];
   supportedLoaders: string[];
+  latestGameVersions?: string[];
+  downloadUrl?: string;
+  gallery?: string[];
+  body?: string;
 }
 
 export interface ModSearchResponse {

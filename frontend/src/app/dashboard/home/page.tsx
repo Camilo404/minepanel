@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { Activity, HardDrive, Cpu, Plus, Server, FolderOpen, Settings } from "lucide-react";
@@ -59,17 +59,16 @@ export default function HomePage() {
     fetchData();
 
     const interval = setInterval(() => {
-      if (isMounted) {
-        if (servers.length > 0) {
-          updateServerStatuses(servers);
-        }
-        // Update system stats every 30 seconds
-        getSystemStats()
-          .then((stats) => {
-            if (isMounted) setSystemStats(stats);
-          })
-          .catch((error) => console.error("Error updating system stats:", error));
+      if (!isMounted) return;
+      const currentServers = serversRef.current;
+      if (currentServers.length > 0) {
+        updateServerStatuses(currentServers);
       }
+      getSystemStats()
+        .then((stats) => {
+          if (isMounted) setSystemStats(stats);
+        })
+        .catch((error) => console.error("Error updating system stats:", error));
     }, 30000);
 
     return () => {
@@ -78,6 +77,11 @@ export default function HomePage() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const serversRef = useRef<ServerInfo[]>([]);
+  useEffect(() => {
+    serversRef.current = servers;
+  }, [servers]);
 
   const updateServerStatuses = async (serversList: ServerInfo[]) => {
     try {

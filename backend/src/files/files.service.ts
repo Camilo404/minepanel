@@ -1,8 +1,9 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs-extra';
 import * as path from 'path';
-import * as archiver from 'archiver';
+import * as yaml from 'js-yaml';
+import archiver from 'archiver';
 
 export interface FileItem {
   name: string;
@@ -15,6 +16,7 @@ export interface FileItem {
 
 @Injectable()
 export class FilesService {
+  private readonly logger = new Logger(FilesService.name);
   private readonly SERVERS_DIR: string;
 
   constructor(private readonly configService: ConfigService) {
@@ -33,11 +35,61 @@ export class FilesService {
       return path.join(this.SERVERS_DIR, '.world', 'worlds');
     }
 
-    return path.join(this.SERVERS_DIR, serverId, 'mc-data');
+    const canonical = path.join(this.SERVERS_DIR, serverId, 'mc-data');
+
+    if (this.isExistingNonEmptyDir(canonical)) {
+      return canonical;
+    }
+
+    const composed = this.resolveComposeDataMount(serverId);
+    if (composed && this.isExistingNonEmptyDir(composed)) {
+      return composed;
+    }
+
+    return canonical;
+  }
+
+  private isExistingNonEmptyDir(dirPath: string): boolean {
+    try {
+      if (!fs.existsSync(dirPath)) return false;
+      const stat = fs.statSync(dirPath);
+      return stat.isDirectory() && fs.readdirSync(dirPath).length > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  private resolveComposeDataMount(serverId: string): string | null {
+    try {
+      const composePath = path.join(this.SERVERS_DIR, serverId, 'docker-compose.yml');
+      if (!fs.existsSync(composePath)) return null;
+
+      const content = fs.readFileSync(composePath, 'utf8');
+      const parsed = yaml.load(content) as { services?: { mc?: { volumes?: unknown } } } | null;
+      const volumes = parsed?.services?.mc?.volumes;
+      if (!Array.isArray(volumes)) return null;
+
+      for (const entry of volumes) {
+        const parts = String(entry).split(':');
+        if (parts.length < 2) continue;
+        const host = parts[0];
+        const target = parts[1];
+        if (target !== '/data') continue;
+
+        const looksLikePath = host.startsWith('/') || host.startsWith('.') || /^[A-Za-z]:[\\/]/.test(host);
+        if (!looksLikePath) continue;
+
+        return path.resolve(path.dirname(composePath), host);
+      }
+      return null;
+    } catch (error) {
+      this.logger.warn(`Failed to resolve /data mount for ${serverId}: ${(error as Error).message}`);
+      return null;
+    }
   }
 
   private validatePath(serverId: string, filePath: string): string {
-    const basePath = this.getBasePath(serverId);
+    const basePath = path.normalize(this.getBasePath(serverId));
     const fullPath = path.join(basePath, filePath || '');
     const normalized = path.normalize(fullPath);
 
@@ -46,7 +98,36 @@ export class FilesService {
       throw new BadRequestException('Invalid path');
     }
 
+    if (serverId === '_root') {
+      const composed = this.resolveBrokenLayoutTarget(filePath);
+      if (composed) return composed;
+    }
+
     return normalized;
+  }
+
+  private resolveBrokenLayoutTarget(filePath: string): string | null {
+    const parts = filePath.split(/[\\/]/).filter(Boolean);
+    if (parts.length < 2) return null;
+    const [targetServerId, maybeMcData, ...rest] = parts;
+    if (maybeMcData !== 'mc-data') return null;
+
+    const composedBase = this.resolveComposeDataMount(targetServerId);
+    if (!composedBase) return null;
+
+    const canonicalMcData = path.normalize(path.join(this.SERVERS_DIR, targetServerId, 'mc-data'));
+    if (path.normalize(composedBase) === canonicalMcData) return null;
+
+    const subPath = rest.join('/');
+    const composedFull = subPath ? path.join(composedBase, subPath) : composedBase;
+
+    const composedBaseNormalized = path.normalize(composedBase);
+    const composedFullNormalized = path.normalize(composedFull);
+    if (!composedFullNormalized.startsWith(composedBaseNormalized)) {
+      return null;
+    }
+
+    return composedFullNormalized;
   }
 
   async listFiles(serverId: string, dirPath: string = ''): Promise<FileItem[]> {

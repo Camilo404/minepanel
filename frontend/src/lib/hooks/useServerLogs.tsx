@@ -119,7 +119,7 @@ export function useServerLogs(serverId: string) {
 
           const errorPatterns = [/ERROR/gi, /SEVERE/gi, /FATAL/gi, /Exception/gi, /java\.lang\./gi, /Caused by:/gi, /\[STDERR\]/gi, /Failed to/gi, /Cannot/gi, /Unable to/gi];
           const logsHaveErrors = errorPatterns.some((pattern) => pattern.test(data.logs));
-          setHasErrors((prev) => prev || logsHaveErrors);
+          setHasErrors(data.hasErrors || logsHaveErrors);
         }
       } catch (error) {
         console.error("Real-time log update failed:", error);
@@ -216,6 +216,11 @@ export function useServerLogs(serverId: string) {
       stopRealTimeUpdates();
     };
   }, [isRealTime, startRealTimeUpdates, stopRealTimeUpdates]);
+
+  useEffect(() => {
+    setSearchTerm("");
+    setLevelFilter("all");
+  }, [serverId]);
 
   const setLogLines = (lines: number) => {
     setLineCount(lines);

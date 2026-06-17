@@ -212,12 +212,9 @@ export const isAuthenticated = async (): Promise<boolean> => {
   if (typeof window === "undefined") return false;
 
   try {
-    // Try to fetch current user session (lightweight check)
-    const response = await api.get("/auth/me", { withCredentials: true });
-    return response.status === 200;
-  } catch (error) {
-    // If 401, token expired or invalid
-    console.error("Error checking authentication:", error);
+    await getSessionUser();
+    return true;
+  } catch {
     return false;
   }
 };
@@ -270,4 +267,8 @@ export const setupAxiosInterceptors = () => {
   );
 };
 
-if (globalThis.window !== undefined) setupAxiosInterceptors();
+let interceptorsRegistered = false;
+if (typeof window !== "undefined" && !interceptorsRegistered) {
+  setupAxiosInterceptors();
+  interceptorsRegistered = true;
+}

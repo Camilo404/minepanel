@@ -160,6 +160,7 @@ export class CurseforgeService {
       timeout: 10000,
       headers: {
         'x-api-key': apiKey,
+        'Authorization': `Key ${apiKey}`,
         'Accept': 'application/json',
       },
     });
