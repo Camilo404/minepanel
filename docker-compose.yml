@@ -22,16 +22,11 @@ services:
       - ${BASE_DIR:-$PWD}/servers:/app/servers
       - /var/run/docker.sock:/var/run/docker.sock
       - ${BASE_DIR:-$PWD}/data:/app/data
+    expose:
+      - '8091'
     networks:
       - dokploy-network
     restart: unless-stopped
-    labels:
-      - "traefik.enable=true"
-      - "traefik.docker.network=dokploy-network"
-      - "traefik.http.routers.minepanel-backend.rule=Host(`api-minepanel.camilo404.dev`)"
-      - "traefik.http.routers.minepanel-backend.entrypoints=websecure"
-      - "traefik.http.routers.minepanel-backend.tls.certresolver=letsencrypt"
-      - "traefik.http.services.minepanel-backend.loadbalancer.server.port=8091"
 
   frontend:
     image: minepanel-frontend:local
@@ -47,25 +42,13 @@ services:
       - NEXT_PUBLIC_BACKEND_URL=${NEXT_PUBLIC_BACKEND_URL:-http://localhost:8091}
       - NEXT_PUBLIC_BASE_PATH=${NEXT_PUBLIC_BASE_PATH:-}
       - NEXT_PUBLIC_DEFAULT_LANGUAGE=${NEXT_PUBLIC_DEFAULT_LANGUAGE:-en}
+    expose:
+      - '3003'
     depends_on:
       - backend
     networks:
       - dokploy-network
     restart: unless-stopped
-    labels:
-      - "traefik.enable=true"
-      - "traefik.docker.network=dokploy-network"
-      - "traefik.http.routers.minepanel-frontend.rule=Host(`minepanel.camilo404.dev`)"
-      - "traefik.http.routers.minepanel-frontend.entrypoints=websecure"
-      - "traefik.http.routers.minepanel-frontend.tls.certresolver=letsencrypt"
-      - "traefik.http.services.minepanel-frontend.loadbalancer.server.port=3003"
-
-  # MC Proxy Router - Routes Minecraft Java traffic by hostname (optional)
-  # Note: mc-router is TCP (not HTTP), so Traefik does NOT route it.
-  # It binds 25565 directly on the host so Minecraft Java clients can reach it.
-  # Setup a separate DNS wildcard: *.mc.camilo404.dev -> your VPS IP.
-  # Bedrock uses UDP and cannot use this proxy; each Bedrock server needs its own port.
-  # Enable with: docker compose --profile proxy up -d
   mc-router:
     image: itzg/mc-router:1.39.1
     container_name: mc-router
