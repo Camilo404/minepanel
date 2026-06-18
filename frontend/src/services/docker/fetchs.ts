@@ -162,7 +162,7 @@ export const getResources = async (serverId: string): Promise<{ cpuUsage: string
 };
 
 export type ServerResourceInfo = {
-  status: "running" | "stopped" | "starting" | "not_found";
+  status: "running" | "stopped" | "starting" | "stopping" | "restarting" | "not_found";
   cpuUsage: string;
   memoryUsage: string;
   memoryLimit: string;

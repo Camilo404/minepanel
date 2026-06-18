@@ -2,13 +2,15 @@ import Link from "next/link";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, PowerIcon, RefreshCw, Server, FolderOpen, Trash2 } from "lucide-react";
+import { ArrowLeft, PowerIcon, RefreshCw, Server, FolderOpen, Trash2, Loader2 } from "lucide-react";
 import { useLanguage } from "@/lib/hooks/useLanguage";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { useState } from "react";
 import { ServerConnectionInfo } from "@/components/molecules/ServerConnectionInfo";
-import { getStatusIcon, getStatusBadgeClass } from "@/lib/utils/server-status";
+import { getStatusIcon, getStatusBadgeClass, isTransitioningStatus } from "@/lib/utils/server-status";
 import { ServerEdition } from "@/lib/types/types";
+
+export type HeaderAction = "idle" | "starting" | "stopping" | "restarting" | "clearing" | "saving";
 
 interface ServerPageHeaderProps {
   readonly serverId: string;
@@ -16,7 +18,7 @@ interface ServerPageHeaderProps {
   readonly serverStatus: string;
   readonly serverPort: string;
   readonly serverEdition?: ServerEdition;
-  readonly isProcessing: boolean;
+  readonly action: HeaderAction;
   readonly onStartServer: () => Promise<boolean>;
   readonly onStopServer: () => Promise<boolean>;
   readonly onRestartServer: () => Promise<boolean>;
@@ -24,7 +26,7 @@ interface ServerPageHeaderProps {
   readonly onOpenFiles?: () => void;
 }
 
-export function ServerPageHeader({ serverId, serverName, serverStatus, serverPort, serverEdition, isProcessing, onStartServer, onStopServer, onRestartServer, onClearData, onOpenFiles }: ServerPageHeaderProps) {
+export function ServerPageHeader({ serverId, serverName, serverStatus, serverPort, serverEdition, action, onStartServer, onStopServer, onRestartServer, onClearData, onOpenFiles }: ServerPageHeaderProps) {
   const { t } = useLanguage();
   const containerName = serverId;
   const [isClearing, setIsClearing] = useState(false);
@@ -38,12 +40,22 @@ export function ServerPageHeader({ serverId, serverName, serverStatus, serverPor
     }
   };
 
+  const isStarting = action === "starting";
+  const isStopping = action === "stopping";
+  const isRestarting = action === "restarting";
+  const isClearingData = action === "clearing";
+  const isAnyActionBusy = action !== "idle";
+
   const getStatusText = (status: string) => {
     switch (status) {
       case "running":
         return t("active");
       case "starting":
         return t("starting2");
+      case "stopping":
+        return t("stopping2");
+      case "restarting":
+        return t("restarting");
       case "stopped":
         return t("stopped2");
       case "not_found":
@@ -52,6 +64,13 @@ export function ServerPageHeader({ serverId, serverName, serverStatus, serverPor
         return t("unknown");
     }
   };
+
+  // Hide the connection card while we're transitioning the container
+  // away from "running". Even with the hook keeping `action` stuck on
+  // "stopping" until Docker confirms the exit, a stale poll can still
+  // surface "running" during the window — gating on `action` keeps
+  // the card hidden until the transition truly settles.
+  const showConnectionInfo = serverStatus === "running" && action !== "stopping" && action !== "restarting";
 
   return (
     <div className="mc-panel p-6 space-y-4 text-gray-200">
@@ -63,9 +82,9 @@ export function ServerPageHeader({ serverId, serverName, serverStatus, serverPor
         </Link>
         <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-white font-minecraft">{serverId}</h1>
         <Badge variant="outline" className={`px-3 py-1 ${getStatusBadgeClass(serverStatus)}`}>
-          {serverStatus === "starting" ? (
+          {isTransitioningStatus(serverStatus) ? (
             <span className="flex items-center gap-1">
-              <RefreshCw className="h-3 w-3 animate-spin" />
+              <Loader2 className="h-3 w-3 animate-spin" />
               {getStatusText(serverStatus)}
             </span>
           ) : (
@@ -92,25 +111,35 @@ export function ServerPageHeader({ serverId, serverName, serverStatus, serverPor
         </div>
 
         <div className="ml-auto flex flex-wrap gap-2 mt-3 md:mt-0">
-          {serverStatus === "running" || serverStatus === "starting" ? (
-            <Button type="button" variant="destructive" onClick={onStopServer} className="gap-2 bg-red-600 hover:bg-red-700 font-minecraft text-white">
+          {isStarting ? (
+            <Button type="button" variant="default" disabled className="gap-2 bg-emerald-600/70 font-minecraft text-white cursor-not-allowed" aria-busy="true">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              {t("starting")}
+            </Button>
+          ) : isStopping ? (
+            <Button type="button" variant="destructive" disabled className="gap-2 bg-red-600/70 font-minecraft text-white cursor-not-allowed" aria-busy="true">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              {t("stopping")}
+            </Button>
+          ) : serverStatus === "running" || serverStatus === "starting" || serverStatus === "restarting" || serverStatus === "stopping" ? (
+            <Button type="button" variant="destructive" onClick={onStopServer} disabled={isAnyActionBusy} className="gap-2 bg-red-600 hover:bg-red-700 font-minecraft text-white">
               <PowerIcon className="h-4 w-4" />
               {t("stopServer")}
             </Button>
           ) : (
-            <Button type="button" variant="default" onClick={onStartServer} className="gap-2 bg-emerald-600 hover:bg-emerald-700 font-minecraft text-white">
+            <Button type="button" variant="default" onClick={onStartServer} disabled={isAnyActionBusy} className="gap-2 bg-emerald-600 hover:bg-emerald-700 font-minecraft text-white">
               <PowerIcon className="h-4 w-4" />
               {t("startServer")}
             </Button>
           )}
 
-          <Button type="button" variant="outline" onClick={onRestartServer} disabled={isProcessing || serverStatus !== "running"} className="gap-2 border-gray-700/50 bg-gray-800/40 text-gray-200 hover:bg-orange-600/20 hover:text-orange-400 hover:border-orange-600/50">
-            <RefreshCw className={`h-4 w-4 ${isProcessing ? "animate-spin" : ""}`} />
-            {isProcessing ? t("restarting") : t("restart2")}
+          <Button type="button" variant="outline" onClick={onRestartServer} disabled={isAnyActionBusy || serverStatus !== "running"} className="gap-2 border-gray-700/50 bg-gray-800/40 text-gray-200 hover:bg-orange-600/20 hover:text-orange-400 hover:border-orange-600/50 disabled:opacity-50 disabled:cursor-not-allowed" aria-busy={isRestarting || undefined}>
+            {isRestarting ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            {isRestarting ? t("restarting") : t("restart2")}
           </Button>
 
           {onOpenFiles && (
-            <Button type="button" variant="outline" onClick={onOpenFiles} className="gap-2 border-gray-700/50 bg-gray-800/40 text-gray-200 hover:bg-blue-600/20 hover:text-blue-400 hover:border-blue-600/50">
+            <Button type="button" variant="outline" onClick={onOpenFiles} disabled={isAnyActionBusy} className="gap-2 border-gray-700/50 bg-gray-800/40 text-gray-200 hover:bg-blue-600/20 hover:text-blue-400 hover:border-blue-600/50 disabled:opacity-50 disabled:cursor-not-allowed">
               <FolderOpen className="h-4 w-4" />
               {t("files")}
             </Button>
@@ -118,8 +147,8 @@ export function ServerPageHeader({ serverId, serverName, serverStatus, serverPor
 
           <AlertDialog>
             <AlertDialogTrigger asChild>
-              <Button type="button" variant="outline" disabled={serverStatus === "running" || serverStatus === "starting"} className="gap-2 border-red-700/50 bg-red-900/20 text-red-400 hover:bg-red-600/30 hover:text-red-300 hover:border-red-600/50 disabled:opacity-50 disabled:cursor-not-allowed">
-                <Trash2 className="h-4 w-4" />
+              <Button type="button" variant="outline" disabled={isAnyActionBusy || serverStatus === "running" || serverStatus === "starting" || serverStatus === "stopping" || serverStatus === "restarting"} className="gap-2 border-red-700/50 bg-red-900/20 text-red-400 hover:bg-red-600/30 hover:text-red-300 hover:border-red-600/50 disabled:opacity-50 disabled:cursor-not-allowed">
+                {isClearingData ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
               </Button>
             </AlertDialogTrigger>
             <AlertDialogContent className="bg-gray-900 border-gray-700">
@@ -129,8 +158,15 @@ export function ServerPageHeader({ serverId, serverName, serverStatus, serverPor
               </AlertDialogHeader>
               <AlertDialogFooter>
                 <AlertDialogCancel className="bg-gray-700 hover:bg-gray-600 text-gray-200 border-gray-600">{t("cancel")}</AlertDialogCancel>
-                <AlertDialogAction onClick={handleClearData} disabled={isClearing} className="bg-red-700 hover:bg-red-800 text-white border-red-900/50 font-minecraft">
-                  {isClearing ? t("deleting") : t("yesDeleteAll")}
+                <AlertDialogAction onClick={handleClearData} disabled={isClearing || isClearingData} className="bg-red-700 hover:bg-red-800 text-white border-red-900/50 font-minecraft">
+                  {(isClearing || isClearingData) ? (
+                    <span className="flex items-center gap-2">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      {t("deleting")}
+                    </span>
+                  ) : (
+                    t("yesDeleteAll")
+                  )}
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>
@@ -138,7 +174,7 @@ export function ServerPageHeader({ serverId, serverName, serverStatus, serverPor
         </div>
       </div>
 
-      {serverStatus === "running" && (
+      {showConnectionInfo && (
         <div className="animate-fade-in-up">
           <ServerConnectionInfo port={serverPort} serverId={serverId} edition={serverEdition} />
         </div>
@@ -146,7 +182,7 @@ export function ServerPageHeader({ serverId, serverName, serverStatus, serverPor
 
       <div className="text-xs text-gray-300 px-2">
         <span className="font-medium">{t("tip")}</span> {t("configureServerTip")}
-        {serverStatus === "running" && ` ${t("changesRequireRestart")}`}
+        {showConnectionInfo && ` ${t("changesRequireRestart")}`}
       </div>
     </div>
   );

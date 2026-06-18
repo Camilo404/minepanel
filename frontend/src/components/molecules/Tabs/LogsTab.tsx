@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Terminal, RefreshCcw, Cpu, Server, Play, Pause, ChevronDown, Search } from "lucide-react";
 import { useServerLogs } from "@/lib/hooks/useServerLogs";
 import { getResources } from "@/services/docker/fetchs";
@@ -37,7 +37,10 @@ interface LogsTabProps {
 
 export function LogsTab({ serverId, rconPort, rconPassword, serverStatus }: Readonly<LogsTabProps>) {
   const { t } = useLanguage();
-  const { logs, filteredLogEntries, loading, lineCount, error, hasErrors, lastUpdate, isRealTime, searchTerm, levelFilter, fetchLogs, setLogLines, clearError, toggleRealTime, setSearchTerm, setLevelFilter } = useServerLogs(serverId);
+  const { logs, filteredLogEntries, loading, lineCount, error, hasErrors, lastUpdate, isRealTime, searchTerm, levelFilter, fetchLogs, setLogLines, clearError, toggleRealTime, setSearchTerm, setLevelFilter } = useServerLogs(
+    serverId,
+    (serverStatus as "running" | "stopped" | "starting" | "stopping" | "restarting" | "not_found" | "unknown" | undefined) ?? "unknown",
+  );
 
   const logsContainerRef = useRef<HTMLPreElement>(null!);
   const [resources, setResources] = useState<ResourcesData | null>(null);
@@ -48,7 +51,6 @@ export function LogsTab({ serverId, rconPort, rconPassword, serverStatus }: Read
 
   useEffect(() => {
     fetchLogs();
-    fetchServerResources();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -84,7 +86,7 @@ export function LogsTab({ serverId, rconPort, rconPassword, serverStatus }: Read
     }
   }, [logs, autoScroll]);
 
-  const fetchServerResources = async () => {
+  const fetchServerResources = useCallback(async () => {
     setLoadingResources(true);
     try {
       const resourceData = await getResources(serverId);
@@ -100,7 +102,23 @@ export function LogsTab({ serverId, rconPort, rconPassword, serverStatus }: Read
     } finally {
       setLoadingResources(false);
     }
-  };
+  }, [serverId]);
+
+  // Initial fetch + refetch on every server-status transition so the
+  // CPU/RAM chip flips from "Servidor inactivo" to live values the
+  // moment the container starts running (previously required a page
+  // reload to see the stats come alive).
+  useEffect(() => {
+    fetchServerResources();
+  }, [serverStatus, fetchServerResources]);
+
+  // Poll CPU/RAM while the logs tab is open so the stats stay live
+  // without the user touching refresh. 3s matches the logs polling
+  // cadence and is light enough for the underlying Docker stats call.
+  useEffect(() => {
+    const interval = setInterval(fetchServerResources, 3000);
+    return () => clearInterval(interval);
+  }, [fetchServerResources]);
 
   const handleRefreshLogs = async () => {
     clearError();
@@ -119,14 +137,18 @@ export function LogsTab({ serverId, rconPort, rconPassword, serverStatus }: Read
   };
 
   const cpuValue = (() => {
-    if (loadingResources) return "…";
+    // Only show the loading placeholder on the very first fetch; on
+    // subsequent polls keep the previous value visible to avoid a
+    // "…" flicker every 3 s while real-time updates run in the
+    // background.
+    if (!resources && loadingResources) return "…";
     if (!resources) return "N/A";
     if (resources.status === "error") return t("error");
     if (resources.status !== "running" && resources.cpuUsage === "N/A") return t("serverInactive");
     return resources.cpuUsage;
   })();
   const memoryValue = (() => {
-    if (loadingResources) return "…";
+    if (!resources && loadingResources) return "…";
     if (!resources) return "N/A";
     if (resources.status === "error") return t("error");
     if (resources.status !== "running" && resources.memoryUsage === "N/A") return t("serverInactive");

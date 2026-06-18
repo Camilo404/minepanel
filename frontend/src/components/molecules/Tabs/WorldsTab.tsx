@@ -96,7 +96,7 @@ export const WorldsTab: FC<WorldsTabProps> = ({ serverId, serverStatus, config, 
     }
   };
 
-  const isServerRunning = serverStatus === "running" || serverStatus === "starting";
+  const isServerRunning = serverStatus === "running" || serverStatus === "starting" || serverStatus === "restarting";
   const localWorlds = worlds.filter((world) => world.scope === "local");
   const globalWorlds = worlds.filter((world) => world.scope === "global");
   const globalWorldGroups = globalWorlds.reduce<Record<string, AvailableWorld[]>>((acc, world) => {

@@ -129,6 +129,17 @@ describe('ServerManagementService', () => {
 
       expect(status).toBe('starting');
     });
+
+    it('should return "stopped" when container disappears between findContainerId and inspect (race with docker compose down)', async () => {
+      (fs.pathExists as jest.Mock).mockResolvedValue(true);
+      mockExec
+        .mockResolvedValueOnce({ stdout: 'container123\n' })
+        .mockRejectedValueOnce(new Error('Command failed: docker inspect --format="{{.State.Status}}" container123\nError: No such object: container123'));
+
+      const status = await service.getServerStatus('myserver');
+
+      expect(status).toBe('stopped');
+    });
   });
 
   describe('findContainerId', () => {
@@ -260,6 +271,59 @@ describe('ServerManagementService', () => {
 
       expect(result.logs).toBe('Invalid server ID');
       expect(result.hasErrors).toBe(true);
+    });
+
+    it('should return "stopped" status with no error when container disappears mid-fetch', async () => {
+      (fs.pathExists as jest.Mock).mockResolvedValue(true);
+      // Chain: findContainerId (compose ps) -> getServerStatus findContainerId (compose ps) -> inspect -> docker logs (fails)
+      mockExec
+        .mockResolvedValueOnce({ stdout: 'container123\n' })
+        .mockResolvedValueOnce({ stdout: 'container123\n' })
+        .mockResolvedValueOnce({ stdout: 'running\n' })
+        .mockRejectedValueOnce(new Error('Command failed: docker logs container123\nError response from daemon: No such container: container123'));
+
+      const result = await service.getServerLogs('myserver');
+
+      expect(result.logs).toBe('Container not found');
+      expect(result.hasErrors).toBe(false);
+      expect(result.status).toBe('stopped');
+    });
+  });
+
+  describe('getServerLogsStream', () => {
+    it('should return "stopped" status with no error when container disappears mid-stream', async () => {
+      (fs.pathExists as jest.Mock).mockResolvedValue(true);
+      // Chain: findContainerId (compose ps) -> getServerStatus findContainerId (compose ps) -> inspect -> docker logs --since (fails)
+      mockExec
+        .mockResolvedValueOnce({ stdout: 'container123\n' })
+        .mockResolvedValueOnce({ stdout: 'container123\n' })
+        .mockResolvedValueOnce({ stdout: 'running\n' })
+        .mockRejectedValueOnce(new Error('Command failed: docker logs --since x --timestamps container123\nError response from daemon: No such container: container123'));
+
+      const result = await service.getServerLogsStream('myserver', 100, '2026-06-17T20:39:28.775Z');
+
+      expect(result.logs).toBe('Container not found');
+      expect(result.hasErrors).toBe(false);
+      expect(result.status).toBe('stopped');
+    });
+  });
+
+  describe('getServerLogsSince', () => {
+    it('should return "stopped" status with no error when container disappears mid-fetch', async () => {
+      (fs.pathExists as jest.Mock).mockResolvedValue(true);
+      // Chain: findContainerId (compose ps) -> getServerStatus findContainerId (compose ps) -> inspect -> docker logs --since (fails)
+      mockExec
+        .mockResolvedValueOnce({ stdout: 'container123\n' })
+        .mockResolvedValueOnce({ stdout: 'container123\n' })
+        .mockResolvedValueOnce({ stdout: 'running\n' })
+        .mockRejectedValueOnce(new Error('Command failed: docker logs --since x --timestamps container123\nError response from daemon: No such container: container123'));
+
+      const result = await service.getServerLogsSince('myserver', '2026-06-17T20:39:28.775Z');
+
+      expect(result.logs).toBe('Container not found');
+      expect(result.hasErrors).toBe(false);
+      expect(result.status).toBe('stopped');
+      expect(result.hasNewContent).toBe(false);
     });
   });
 

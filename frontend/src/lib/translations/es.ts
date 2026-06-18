@@ -100,6 +100,7 @@ export const es: Record<TranslationKey, string> = {
   offline: 'Desconectado',
   starting: 'Iniciando',
   stopping: 'Deteniendo',
+  stopping2: 'Deteniendo...',
   running: 'Ejecutándose',
   stopped: 'Detenido',
   not_found: 'No Encontrado',

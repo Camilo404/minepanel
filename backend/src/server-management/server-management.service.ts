@@ -123,6 +123,13 @@ export class ServerManagementService {
     return /^[a-zA-Z0-9_-]+$/.test(serverId);
   }
 
+  private isContainerMissingError(error: unknown): boolean {
+    const err = error as { message?: string; stderr?: string; stdout?: string } | null | undefined;
+    if (!err) return false;
+    const combined = `${err.message ?? ''}\n${err.stderr ?? ''}\n${err.stdout ?? ''}`;
+    return /No such (object|container)/i.test(combined);
+  }
+
   private async serverExists(serverId: string): Promise<boolean> {
     return fs.pathExists(path.join(this.SERVERS_DIR, serverId));
   }
@@ -788,6 +795,10 @@ export class ServerManagementService {
 
       return 'not_found';
     } catch (error) {
+      if (this.isContainerMissingError(error)) {
+        this.logger.debug(`Container for server ${serverId} disappeared during status check, treating as stopped`);
+        return 'stopped';
+      }
       this.logger.error(`Failed to get status for server ${serverId}`, error);
       return 'not_found';
     }
@@ -1258,6 +1269,15 @@ export class ServerManagementService {
         },
       };
     } catch (error) {
+      if (this.isContainerMissingError(error)) {
+        this.logger.debug(`Container for server ${serverId} disappeared while fetching logs, treating as stopped`);
+        return {
+          logs: 'Container not found',
+          hasErrors: false,
+          lastUpdate: new Date(),
+          status: 'stopped',
+        };
+      }
       this.logger.error(`Failed to get logs for server ${serverId}`, error);
       return {
         logs: `Error retrieving logs: ${(error as Error).message}`,
@@ -1376,7 +1396,16 @@ export class ServerManagementService {
         },
       };
     } catch (error) {
-      console.error(`Failed to get logs stream for server ${serverId}:`, error);
+      if (this.isContainerMissingError(error)) {
+        this.logger.debug(`Container for server ${serverId} disappeared during log stream, treating as stopped`);
+        return {
+          logs: 'Container not found',
+          hasErrors: false,
+          lastUpdate: new Date(),
+          status: 'stopped',
+        };
+      }
+      this.logger.error(`Failed to get logs stream for server ${serverId}`, error);
       return {
         logs: `Error retrieving logs: ${(error as Error).message}`,
         hasErrors: true,
@@ -1433,6 +1462,16 @@ export class ServerManagementService {
         hasNewContent,
       };
     } catch (error) {
+      if (this.isContainerMissingError(error)) {
+        this.logger.debug(`Container for server ${serverId} disappeared while fetching logs since ${timestamp}, treating as stopped`);
+        return {
+          logs: 'Container not found',
+          hasErrors: false,
+          lastUpdate: new Date(),
+          status: 'stopped',
+          hasNewContent: false,
+        };
+      }
       this.logger.error(`Failed to get logs since ${timestamp} for server ${serverId}`, error);
       return {
         logs: `Error retrieving logs: ${(error as Error).message}`,

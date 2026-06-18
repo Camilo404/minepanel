@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { isAuthenticated } from "@/services/auth/auth.service";
 import { useServerStatus } from "@/lib/hooks/useServerStatus";
 import { useServerConfig } from "@/lib/hooks/useServerConfig";
-import { ServerPageHeader } from "@/components/organisms/ServerPageHeader";
+import { ServerPageHeader, HeaderAction } from "@/components/organisms/ServerPageHeader";
 import { ServerConfigTabs } from "@/components/organisms/ServerConfigTabs";
 import { ServerLoadingSkeleton } from "@/components/organisms/ServerLoadingSkeleton";
 import Image from "next/image";
@@ -18,8 +18,8 @@ export default function ServerConfig() {
   const serverId = params.server as string;
   const [refreshToken, setRefreshToken] = useState(0);
 
-  const { config, loading: configLoading, updateConfig, saveConfig, restartServer, clearServerData, isSaving } = useServerConfig(serverId);
-  const { status, isProcessingAction, startServer, stopServer } = useServerStatus(serverId);
+  const { config, loading: configLoading, updateConfig, saveConfig, restartServer, clearServerData, isSaving, action: configAction } = useServerConfig(serverId);
+  const { status, action: lifecycleAction, startServer, stopServer, setOptimisticStatus } = useServerStatus(serverId);
   const { t } = useLanguage();
 
   useEffect(() => {
@@ -36,6 +36,17 @@ export default function ServerConfig() {
     return success;
   }, [clearServerData]);
 
+  const handleRestartServer = useCallback(async () => {
+    setOptimisticStatus("restarting");
+    try {
+      return await restartServer();
+    } catch {
+      return false;
+    }
+  }, [restartServer, setOptimisticStatus]);
+
+  const headerAction: HeaderAction = lifecycleAction !== "idle" ? lifecycleAction : configAction;
+
   if (configLoading) {
     return <ServerLoadingSkeleton />;
   }
@@ -43,7 +54,7 @@ export default function ServerConfig() {
   return (
     <div className="space-y-8">
       <div className="animate-fade-in-up">
-        <ServerPageHeader serverId={serverId} serverName={config.serverName} serverStatus={status} serverPort={config.port || "25565"} serverEdition={config.edition} isProcessing={isProcessingAction} onStartServer={startServer} onStopServer={stopServer} onRestartServer={restartServer} onClearData={handleClearServerData} />
+        <ServerPageHeader serverId={serverId} serverName={config.serverName} serverStatus={status} serverPort={config.port || "25565"} serverEdition={config.edition} action={headerAction} onStartServer={startServer} onStopServer={stopServer} onRestartServer={handleRestartServer} onClearData={handleClearServerData} />
       </div>
 
       <div className="animate-fade-in stagger-1">
