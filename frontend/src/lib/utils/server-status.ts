@@ -1,11 +1,16 @@
-export type ServerStatus = "running" | "stopped" | "starting" | "not_found" | "loading" | "unknown" | "error";
+export type ServerStatus = "running" | "stopped" | "starting" | "stopping" | "restarting" | "not_found" | "loading" | "unknown" | "error";
+
+const isTransitioning = (status: string): boolean => status === "starting" || status === "stopping" || status === "restarting";
 
 export const getStatusColor = (status: string): string => {
   switch (status) {
     case "running":
       return "bg-emerald-500";
     case "starting":
+    case "restarting":
       return "bg-orange-500";
+    case "stopping":
+      return "bg-amber-500";
     case "stopped":
       return "bg-yellow-500";
     case "not_found":
@@ -22,7 +27,10 @@ export const getStatusBadgeClass = (status: string): string => {
     case "running":
       return "bg-green-600/20 text-green-400 border-green-600/30";
     case "starting":
+    case "restarting":
       return "bg-orange-600/20 text-orange-400 border-orange-600/30";
+    case "stopping":
+      return "bg-amber-600/20 text-amber-400 border-amber-600/30";
     case "stopped":
       return "bg-yellow-600/20 text-yellow-400 border-yellow-600/30";
     case "not_found":
@@ -42,7 +50,10 @@ export const getStatusBadgeClassCompact = (status: string): string => {
     case "stopped":
       return "border-yellow-600/30 text-yellow-400";
     case "starting":
+    case "restarting":
       return "border-orange-600/30 text-orange-400";
+    case "stopping":
+      return "border-amber-600/30 text-amber-400";
     default:
       return "border-red-600/30 text-red-400";
   }
@@ -53,7 +64,10 @@ export const getStatusIcon = (status: string): string => {
     case "running":
       return "/images/emerald.webp";
     case "starting":
+    case "restarting":
       return "/images/gold.webp";
+    case "stopping":
+      return "/images/clock.webp";
     case "stopped":
       return "/images/redstone.webp";
     case "not_found":
@@ -64,3 +78,5 @@ export const getStatusIcon = (status: string): string => {
       return "/images/barrier.webp";
   }
 };
+
+export const isTransitioningStatus = isTransitioning;

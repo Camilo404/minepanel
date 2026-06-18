@@ -98,6 +98,7 @@ export const en = {
   offline: 'Offline',
   starting: 'Starting',
   stopping: 'Stopping',
+  stopping2: 'Stopping...',
   running: 'Running',
   stopped: 'Stopped',
   not_found: 'Not Found',

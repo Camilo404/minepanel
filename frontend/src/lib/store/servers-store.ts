@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { fetchServerList, getAllServersStatus } from "@/services/docker/fetchs";
 
-export type ServerStatus = "running" | "stopped" | "starting" | "not_found" | "loading";
+export type ServerStatus = "running" | "stopped" | "starting" | "stopping" | "restarting" | "not_found" | "loading";
 
 export interface ServerInfo {
   id: string;

@@ -99,7 +99,7 @@ export const LogsDisplay: FC<LogsDisplayProps> = ({ logsContainerRef, filteredLo
             </div>
           ) : (
             <div className="flex h-full flex-col items-center justify-center gap-2 text-gray-500">
-              <Image src="/images/empty-chest.png" alt="No Logs" width={48} height={48} className="opacity-70" />
+              <Image src="/images/chest.webp" alt="No Logs" width={48} height={48} className="pixelated opacity-70" />
               <span className="font-minecraft text-xs">{t("noLogsAvailable")}</span>
             </div>
           )}

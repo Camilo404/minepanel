@@ -52,7 +52,7 @@ export const ServerConfigTabs: FC<ServerConfigTabsProps> = ({ serverId, config, 
   const showResourcesTab = isJava; // JVM settings only apply to Java
   const showCommandsTab = isJava; // RCON only works with Java
 
-  const isServerRunning = serverStatus === "running" || serverStatus === "starting";
+  const isServerRunning = serverStatus === "running" || serverStatus === "starting" || serverStatus === "restarting";
 
   // Single source of truth for the tab list. Drives the side nav, the hash
   // validation and the command-palette index, so there is no duplicated list.

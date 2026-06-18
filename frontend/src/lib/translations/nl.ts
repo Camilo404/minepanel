@@ -100,6 +100,7 @@ export const nl: Record<TranslationKey, string> = {
   offline: 'Offline',
   starting: 'Opstarten',
   stopping: 'Stoppen',
+  stopping2: 'Stoppen...',
   running: 'Actief',
   stopped: 'Gestopt',
   not_found: 'Niets gevonden',

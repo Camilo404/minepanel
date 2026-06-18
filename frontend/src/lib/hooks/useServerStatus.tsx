@@ -4,10 +4,12 @@ import { getServerStatus as apiGetServerStatus, startServer as apiStartServer, s
 import { useLanguage } from "@/lib/hooks/useLanguage";
 import { useServersStore, ServerStatus } from "@/lib/store/servers-store";
 
+export type ServerLifecycleAction = "idle" | "starting" | "stopping";
+
 export function useServerStatus(serverId: string) {
   const { t } = useLanguage();
   const [status, setStatus] = useState<string>("unknown");
-  const [isProcessingAction, setIsProcessingAction] = useState(false);
+  const [action, setAction] = useState<ServerLifecycleAction>("idle");
   const setServerStatus = useServersStore((state) => state.setServerStatus);
 
   const translateMessage = (message: string): string => {
@@ -38,8 +40,17 @@ export function useServerStatus(serverId: string) {
     return () => clearInterval(interval);
   }, [fetchStatus]);
 
+  const applyOptimisticStatus = useCallback(
+    (next: ServerStatus) => {
+      setStatus(next);
+      setServerStatus(serverId, next);
+    },
+    [serverId, setServerStatus],
+  );
+
   const startServer = async () => {
-    setIsProcessingAction(true);
+    setAction("starting");
+    applyOptimisticStatus("starting");
     try {
       const result = await apiStartServer(serverId);
       if (result.success) {
@@ -53,19 +64,47 @@ export function useServerStatus(serverId: string) {
       console.error("Error starting server:", error);
       const errorMessage = error instanceof Error ? translateMessage(error.message) : t("SERVER_START_ERROR");
       mcToast.error(errorMessage);
+      fetchStatus();
       return false;
     } finally {
-      setIsProcessingAction(false);
+      setAction("idle");
     }
   };
 
   const stopServer = async () => {
-    setIsProcessingAction(true);
+    setAction("stopping");
+    applyOptimisticStatus("stopping");
     try {
       const result = await apiStopServer(serverId);
       if (result.success) {
         mcToast.success(t("serverStopped"));
-        fetchStatus();
+        // Keep action="stopping" until the container actually exits.
+        // Previously the action flipped to "idle" the moment the API
+        // call returned success, but Docker may still report "running"
+        // for several seconds while the container is shutting down —
+        // any status poll in that window would briefly flash stale UI
+        // (notably the connection info card) before the real
+        // "stopped" status arrived.
+        const waitForContainerStopped = async () => {
+          try {
+            const MAX_ATTEMPTS = 20;
+            for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+              await new Promise((r) => setTimeout(r, 1500));
+              const current = await fetchStatus();
+              if (current === "stopped" || current === "not_found") {
+                setAction("idle");
+                return;
+              }
+            }
+          } catch (err) {
+            console.error("Error while waiting for container to stop:", err);
+          }
+          // Release the busy state after the timeout so other UI
+          // (start button, restart button) doesn't stay disabled
+          // forever if the backend never reports "stopped".
+          setAction("idle");
+        };
+        waitForContainerStopped();
         return true;
       } else {
         throw new Error(translateMessage(result.message || "SERVER_STOP_ERROR"));
@@ -74,16 +113,17 @@ export function useServerStatus(serverId: string) {
       console.error("Error stopping server:", error);
       const errorMessage = error instanceof Error ? translateMessage(error.message) : t("SERVER_STOP_ERROR");
       mcToast.error(errorMessage);
+      fetchStatus();
+      setAction("idle");
       return false;
-    } finally {
-      setIsProcessingAction(false);
     }
   };
 
   return {
     status,
-    isProcessingAction,
+    action,
     fetchStatus,
+    setOptimisticStatus: applyOptimisticStatus,
     startServer,
     stopServer,
   };

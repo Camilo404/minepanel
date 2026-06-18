@@ -149,6 +149,8 @@ function normalizeAutoStopRestartPolicy(config: ServerConfig): ServerConfig {
   };
 }
 
+export type ConfigAction = 'idle' | 'saving' | 'restarting' | 'clearing';
+
 export function useServerConfig(serverId: string) {
   const { t } = useLanguage();
   const [config, setConfig] = useState<ServerConfig>(defaultConfig);
@@ -156,6 +158,8 @@ export function useServerConfig(serverId: string) {
   const [isRestarting, setIsRestarting] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+
+  const action: ConfigAction = isClearing ? "clearing" : isSaving ? "saving" : isRestarting ? "restarting" : "idle";
 
   useEffect(() => {
     async function loadConfig() {
@@ -272,6 +276,7 @@ export function useServerConfig(serverId: string) {
     isRestarting,
     isClearing,
     isSaving,
+    action,
     updateConfig,
     saveConfig,
     restartServer,

@@ -98,6 +98,7 @@ export const fr = {
   offline: 'Hors ligne',
   starting: 'Démarrage',
   stopping: 'Arrêt',
+  stopping2: 'Arrêt...',
   running: 'En fonctionnement',
   stopped: 'Arrêté',
   not_found: 'Non Trouvé',

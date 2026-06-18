@@ -16,7 +16,7 @@ interface ServerQuickViewProps {
 type ServerWithResources = {
   id: string;
   name: string;
-  status: "running" | "stopped" | "starting" | "not_found";
+  status: "running" | "stopped" | "starting" | "stopping" | "restarting" | "not_found";
   cpuUsage: number;
   cpuLimit: number;
   cpuPercent: number;
@@ -103,7 +103,10 @@ export function ServerQuickView({ servers, resources, isLoading = false }: Serve
       case "running":
         return "bg-emerald-700/70 text-emerald-200";
       case "starting":
-        return "bg-yellow-700/70 text-yellow-200";
+      case "restarting":
+        return "bg-orange-700/70 text-orange-200";
+      case "stopping":
+        return "bg-amber-700/70 text-amber-200";
       case "stopped":
         return "bg-gray-700/70 text-gray-200";
       default:
