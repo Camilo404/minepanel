@@ -27,6 +27,16 @@ services:
     networks:
       - dokploy-network
     restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.minepanel-backend-web.rule=Host(`api-minepanel.camilo404.dev`)"
+      - "traefik.http.routers.minepanel-backend-web.entrypoints=web"
+      - "traefik.http.routers.minepanel-backend-web.middlewares=redirect-to-https@file"
+      - "traefik.http.routers.minepanel-backend-websecure.rule=Host(`api-minepanel.camilo404.dev`)"
+      - "traefik.http.routers.minepanel-backend-websecure.entrypoints=websecure"
+      - "traefik.http.routers.minepanel-backend-websecure.tls.certresolver=letsencrypt"
+      - "traefik.http.services.minepanel-backend-web.loadbalancer.server.port=8091"
+      - "traefik.http.services.minepanel-backend-websecure.loadbalancer.server.port=8091"
 
   frontend:
     image: minepanel-frontend:local
@@ -49,6 +59,16 @@ services:
     networks:
       - dokploy-network
     restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.minepanel-frontend-web.rule=Host(`minepanel.camilo404.dev`)"
+      - "traefik.http.routers.minepanel-frontend-web.entrypoints=web"
+      - "traefik.http.routers.minepanel-frontend-web.middlewares=redirect-to-https@file"
+      - "traefik.http.routers.minepanel-frontend-websecure.rule=Host(`minepanel.camilo404.dev`)"
+      - "traefik.http.routers.minepanel-frontend-websecure.entrypoints=websecure"
+      - "traefik.http.routers.minepanel-frontend-websecure.tls.certresolver=letsencrypt"
+      - "traefik.http.services.minepanel-frontend-web.loadbalancer.server.port=3003"
+      - "traefik.http.services.minepanel-frontend-websecure.loadbalancer.server.port=3003"
   mc-router:
     image: itzg/mc-router:1.39.1
     container_name: mc-router
