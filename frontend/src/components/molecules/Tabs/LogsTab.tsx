@@ -37,7 +37,7 @@ interface LogsTabProps {
 
 export function LogsTab({ serverId, rconPort, rconPassword, serverStatus }: Readonly<LogsTabProps>) {
   const { t } = useLanguage();
-  const { logs, filteredLogEntries, loading, lineCount, error, hasErrors, lastUpdate, isRealTime, searchTerm, levelFilter, fetchLogs, setLogLines, clearError, toggleRealTime, setSearchTerm, setLevelFilter } = useServerLogs(
+  const { logs, filteredLogEntries, loading, lineCount, error, hasErrors, lastUpdate, isRealTime, searchTerm, levelFilter, fetchLogs, setLogLines, clearError, toggleRealTime, setSearchTerm, setLevelFilter, streamError } = useServerLogs(
     serverId,
     (serverStatus as "running" | "stopped" | "starting" | "stopping" | "restarting" | "not_found" | "unknown" | undefined) ?? "unknown",
   );
@@ -48,11 +48,6 @@ export function LogsTab({ serverId, rconPort, rconPassword, serverStatus }: Read
   const [autoScroll, setAutoScroll] = useState(true);
   const isUserScrollingRef = useRef(false);
   const manualScrollControlRef = useRef(false);
-
-  useEffect(() => {
-    fetchLogs();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const isNearBottom = (container: HTMLElement, threshold = 100) => {
     const { scrollTop, scrollHeight, clientHeight } = container;
@@ -155,7 +150,10 @@ export function LogsTab({ serverId, rconPort, rconPassword, serverStatus }: Read
     return `${resources.memoryUsage} / ${resources.memoryLimit}`;
   })();
 
-  const isLive = isRealTime && !error;
+  // Single status indicator for the logs section: the footer text below
+  // ("Real time active" / "paused" / etc.) is the only one we render, so we
+  // avoid duplicating it with a "LIVE" pill in the title or a `LiveIndicator`
+  // chip in the toolbar.
   const totalEntries = filteredLogEntries.length;
 
   return (
@@ -167,13 +165,6 @@ export function LogsTab({ serverId, rconPort, rconPassword, serverStatus }: Read
           {t("serverLogs")}
           <span className="text-gray-400 font-normal text-xs ml-1.5 hidden sm:inline">• {t("viewLogsRealtime")}</span>
         </h2>
-
-        {isLive && (
-          <span className="mc-tag text-[10px] px-2 py-0.5 flex items-center gap-1.5 bg-emerald-700/70 text-emerald-200">
-            <span className="w-1.5 h-1.5 bg-emerald-300 rounded-full animate-pulse" />
-            {t("liveLabel")}
-          </span>
-        )}
 
         {/* Compact CPU + RAM stats */}
         <div className="flex items-center gap-2 ml-auto">
@@ -271,6 +262,12 @@ export function LogsTab({ serverId, rconPort, rconPassword, serverStatus }: Read
         </button>
       </div>
 
+      {streamError && (
+        <div className="mx-4 mt-2 rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+          {t("streamError")}: {streamError}
+        </div>
+      )}
+
       {/* Logs display */}
       <LogsDisplay
         logsContainerRef={logsContainerRef}
@@ -294,29 +291,36 @@ export function LogsTab({ serverId, rconPort, rconPassword, serverStatus }: Read
       <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 border-t-2 border-[var(--mc-frame)]/60 bg-black/20">
         <div className="flex flex-wrap items-center gap-3 text-[11px] font-minecraft text-gray-400">
           <div className="flex items-center gap-1.5">
-            <span
-              className={cn(
-                "w-2 h-2 rounded-full",
-                error
-                  ? "bg-red-500"
-                  : hasErrors
-                    ? "bg-yellow-500 animate-pulse"
+            {(() => {
+              const isStoppedState =
+                error?.type === "container_not_found" || error?.type === "server_not_found";
+              const dotClass = error && !isStoppedState
+                ? "bg-red-500"
+                : hasErrors
+                  ? "bg-yellow-500 animate-pulse"
+                  : isStoppedState
+                    ? "bg-gray-500"
                     : isRealTime
                       ? "bg-emerald-500 animate-pulse"
-                      : "bg-gray-500"
-              )}
-            />
-            <span>
-              {error
+                      : "bg-gray-500";
+              const label = error && !isStoppedState
                 ? t("disconnected")
                 : hasErrors
                   ? t("withErrors")
-                  : isRealTime
-                    ? t("realTimeActive")
-                    : t("realTimePaused")}
-            </span>
+                  : isStoppedState
+                    ? t("serverNotRunning")
+                    : isRealTime
+                      ? t("realTimeActive")
+                      : t("realTimePaused");
+              return (
+                <>
+                  <span className={cn("w-2 h-2 rounded-full", dotClass)} />
+                  <span>{label}</span>
+                </>
+              );
+            })()}
           </div>
-          {lastUpdate && !error && (
+          {lastUpdate && (!error || error?.type === "container_not_found" || error?.type === "server_not_found") && (
             <div className="flex items-center gap-1 text-gray-500">
               <Terminal className="w-3 h-3" />
               <span className="font-mono">{lastUpdate.toLocaleTimeString()}</span>

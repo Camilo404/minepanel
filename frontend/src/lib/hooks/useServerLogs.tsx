@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { mcToast } from "@/lib/utils/minecraft-toast";
 import { getServerLogsStream } from "@/services/docker/fetchs";
 import { useLanguage } from "@/lib/hooks/useLanguage";
+import { openSse, type SseHandle, type SseStatus } from "@/lib/sse-client";
 
 interface LogsError {
   type: "container_not_found" | "server_not_found" | "connection_error" | "unknown";
@@ -23,21 +24,42 @@ interface LogsResponse {
   lastTimestamp?: string;
 }
 
-// Subset of the hook's serverStatus contract: "stopped" / "not_found" mean
-// the container is gone, "starting" / "running" / "restarting" mean the
-// container is (re)booting. "unknown" is a no-op so the hook stays useful
-// for callers that don't know the status yet.
 type LogsServerStatus = "running" | "stopped" | "starting" | "stopping" | "restarting" | "not_found" | "unknown";
 
-// Same patterns the backend uses in `analyzeLogs` to flag a buffer as
-// containing errors. The frontend re-runs them locally so a missing
-// `data.hasErrors` doesn't silently flip the badge.
 const ERROR_PATTERNS = [/ERROR/gi, /SEVERE/gi, /FATAL/gi, /Exception/gi, /java\.lang\./gi, /Caused by:/gi, /\[STDERR\]/gi, /Failed to/gi, /Cannot/gi, /Unable to/gi];
 
 const detectErrors = (content: string): boolean => {
   if (!content) return false;
   return ERROR_PATTERNS.some((p) => p.test(content));
 };
+
+const hashContent = (content: string): string => {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < content.length; i++) {
+    hash ^= content.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36);
+};
+
+interface SseTickPayload {
+  type: "tick";
+  logs: string;
+  hasErrors: boolean;
+  status: "running" | "stopped" | "starting" | "not_found";
+  lastTimestamp?: string;
+  hasNewContent?: boolean;
+}
+
+interface SseTerminalPayload {
+  type: "terminal";
+  status: "stopped" | "not_found";
+  logs: string;
+  hasErrors: boolean;
+  reason: "container_gone" | "server_gone";
+}
+
+type SsePayload = SseTickPayload | SseTerminalPayload;
 
 export function useServerLogs(serverId: string, serverStatus: LogsServerStatus = "unknown") {
   const { t } = useLanguage();
@@ -51,11 +73,24 @@ export function useServerLogs(serverId: string, serverStatus: LogsServerStatus =
   const [isRealTime, setIsRealTime] = useState<boolean>(true);
   const [searchTerm, setSearchTerm] = useState<string>("");
   const [levelFilter, setLevelFilter] = useState<string>("all");
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
-  const previousLogsRef = useRef<string>("");
+  const [streamStatus, setStreamStatus] = useState<SseStatus>("connecting");
+  const [streamError, setStreamError] = useState<string | null>(null);
   const lastTimestampRef = useRef<string | null>(null);
   const isInitialLoadRef = useRef<boolean>(true);
   const lastServerStatusRef = useRef<LogsServerStatus>(serverStatus);
+  const sseHandleRef = useRef<SseHandle<SsePayload> | null>(null);
+  const sseAbortRef = useRef<AbortController | null>(null);
+  const activeServerRef = useRef<string | null>(null);
+  const isRealTimeRef = useRef<boolean>(true);
+  const serverStatusRef = useRef<LogsServerStatus>(serverStatus);
+
+  useEffect(() => {
+    isRealTimeRef.current = isRealTime;
+  }, [isRealTime]);
+
+  useEffect(() => {
+    serverStatusRef.current = serverStatus;
+  }, [serverStatus]);
 
   const parseLogLevel = useCallback((content: string): "info" | "warn" | "error" | "debug" => {
     const upperContent = content.toUpperCase();
@@ -72,13 +107,9 @@ export function useServerLogs(serverId: string, serverStatus: LogsServerStatus =
   }, []);
 
   const cleanLogContent = useCallback((line: string): string => {
-    // Solo limpiar caracteres de control innecesarios, mantener códigos ANSI
     let cleaned = line.replace(/>\[2K/g, "");
     cleaned = cleaned.replace(/\r/g, "");
-
-    // Remover timestamp Docker al inicio
     cleaned = cleaned.replace(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z\s*/, "");
-
     return cleaned.trim();
   }, []);
 
@@ -87,50 +118,52 @@ export function useServerLogs(serverId: string, serverStatus: LogsServerStatus =
       if (!logsContent) return [];
 
       const lines = logsContent.split("\n").filter((line) => line.trim());
+      const seen = new Set(existingEntries.map((entry) => entry.content));
+      const out: LogEntry[] = [];
 
-      const existingContents = new Set(existingEntries.map((entry) => entry.content));
-
-      return lines
-        .filter((line) => !existingContents.has(cleanLogContent(line)))
-        .map((line, index) => ({
-          id: `${Date.now()}-${index}`,
-          content: cleanLogContent(line),
-          timestamp: new Date(),
+      for (const line of lines) {
+        const content = cleanLogContent(line);
+        if (!content || seen.has(content)) continue;
+        seen.add(content);
+        out.push({
+          id: hashContent(content),
+          content,
+          timestamp: new Date(0),
           level: parseLogLevel(line),
-        }));
+        });
+      }
+
+      return out;
     },
     [parseLogLevel, cleanLogContent]
   );
 
-  // Centralized response handler used by both the manual `fetchLogs` and
-  // the real-time poll. Resetting the streaming cursor (`lastTimestampRef`)
-  // and clearing the entry buffer when the container is gone is what fixes
-  // the "stale error label after stop+start" bug — without it, the old
-  // container's `lastTimestamp` would carry over and the freshly booted
-  // container's empty early buffer would never update `hasErrors`.
+  const resetBuffer = useCallback(() => {
+    setLogEntries([]);
+    setHasErrors(false);
+    setLogs("");
+    lastTimestampRef.current = null;
+    isInitialLoadRef.current = true;
+  }, []);
+
   const applyLogsResponse = useCallback(
     (data: LogsResponse, options: { append: boolean }) => {
+      if (activeServerRef.current !== serverId) return;
       const content = data.logs ?? "";
       const isContainerGone = content.includes("Container not found") || data.status === "stopped" || data.status === "not_found";
       const isServerGone = content.includes("Server not found");
       const isConnectionError = content.includes("Error retrieving logs:");
 
       if (isContainerGone) {
-        setError({ type: "container_not_found", message: t("containerNotFound") });
+        setError({ type: "container_not_found", message: t("serverNotRunning") });
         setLogs(t("serverNotRunning"));
-        setLogEntries([]);
-        setHasErrors(false);
-        lastTimestampRef.current = null;
-        isInitialLoadRef.current = true;
+        resetBuffer();
         return;
       }
       if (isServerGone) {
         setError({ type: "server_not_found", message: t("serverNotFound") });
         setLogs(t("serverNotFoundSpecified"));
-        setLogEntries([]);
-        setHasErrors(false);
-        lastTimestampRef.current = null;
-        isInitialLoadRef.current = true;
+        resetBuffer();
         return;
       }
       if (isConnectionError) {
@@ -141,7 +174,6 @@ export function useServerLogs(serverId: string, serverStatus: LogsServerStatus =
         return;
       }
 
-      // Success path
       setError(null);
       setLogs(content);
 
@@ -164,20 +196,13 @@ export function useServerLogs(serverId: string, serverStatus: LogsServerStatus =
       setLastUpdate(new Date());
       setHasErrors(data.hasErrors || detectErrors(content));
     },
-    [parseLogsToEntries, t]
+    [parseLogsToEntries, resetBuffer, t, serverId]
   );
 
-  // Watch the lifecycle status. When the container disappears or is being
-  // recreated, hide the error label immediately (don't wait for the next
-  // 3s poll) and reset the streaming cursor so the next successful poll
-  // is treated as a fresh load instead of an append into stale data.
+  const startRealTimeUpdatesRef = useRef<() => void>(() => {});
+
   useEffect(() => {
     const previous = lastServerStatusRef.current;
-    // "stopping" is a transition: the container is still streaming its
-    // shutdown logs ("Stopping the server", "Saving chunks", etc.) so
-    // it must NOT be treated as terminal for the buffer-wipe logic.
-    // Otherwise a stale "running" poll that lands mid-shutdown would
-    // be misread as a restart and wipe the shutdown logs.
     const isGone = serverStatus === "stopped" || serverStatus === "not_found" || serverStatus === "stopping";
     const isAlive = serverStatus === "running" || serverStatus === "starting" || serverStatus === "restarting";
     const wasGone = previous === "stopped" || previous === "not_found";
@@ -186,42 +211,83 @@ export function useServerLogs(serverId: string, serverStatus: LogsServerStatus =
       setHasErrors(false);
     }
     if (isAlive && wasGone) {
-      // Server (re)started after a terminal state: wipe the buffer so
-      // old lines from the previous container don't pollute the new
-      // session.
-      setLogEntries([]);
-      setHasErrors(false);
-      setLogs("");
-      lastTimestampRef.current = null;
-      isInitialLoadRef.current = true;
+      resetBuffer();
+      if (isRealTimeRef.current) {
+        startRealTimeUpdatesRef.current();
+      }
     }
     lastServerStatusRef.current = serverStatus;
-  }, [serverStatus]);
+  }, [serverStatus, resetBuffer]);
 
-  const startRealTimeUpdates = useCallback(() => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
+  const stopStream = useCallback(() => {
+    if (sseHandleRef.current) {
+      sseHandleRef.current.cancel();
+      sseHandleRef.current = null;
     }
-
-    intervalRef.current = setInterval(async () => {
-      if (!isRealTime) return;
-
-      try {
-        const since = lastTimestampRef.current || undefined;
-        const data = await getServerLogsStream(serverId, lineCount, since);
-        applyLogsResponse(data as LogsResponse, { append: true });
-      } catch (err) {
-        console.error("Real-time log update failed:", err);
-      }
-    }, 3000);
-  }, [serverId, lineCount, isRealTime, applyLogsResponse]);
-
-  const stopRealTimeUpdates = useCallback(() => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
+    if (sseAbortRef.current) {
+      sseAbortRef.current.abort();
+      sseAbortRef.current = null;
     }
   }, []);
+
+  const startStream = useCallback(() => {
+    stopStream();
+    setStreamError(null);
+    const controller = new AbortController();
+    sseAbortRef.current = controller;
+
+    const since = lastTimestampRef.current ?? "";
+    const path = since
+      ? `/servers/${serverId}/logs/sse?lines=${lineCount}&since=${encodeURIComponent(since)}`
+      : `/servers/${serverId}/logs/sse?lines=${lineCount}`;
+
+    sseHandleRef.current = openSse<SsePayload>(path, {
+      signal: controller.signal,
+      onStatus: setStreamStatus,
+      onError: (err) => {
+        setStreamError(err.message);
+        setError((current) => current ?? { type: "connection_error", message: t("connectionErrorDocker") });
+      },
+      onMessage: (payload) => {
+        if (activeServerRef.current !== serverId) return;
+        if (payload.type === "terminal") {
+          const fakeResponse: LogsResponse = {
+            logs: payload.logs,
+            hasErrors: payload.hasErrors,
+            lastUpdate: new Date(),
+            status: payload.status,
+          };
+          applyLogsResponse(fakeResponse, { append: false });
+          const status = serverStatusRef.current;
+          const shouldStop = status === "stopped" || status === "not_found" || status === "stopping";
+          if (shouldStop) {
+            stopStream();
+          }
+          return;
+        }
+        const response: LogsResponse = {
+          logs: payload.logs,
+          hasErrors: payload.hasErrors,
+          lastUpdate: new Date(),
+          status: payload.status,
+          lastTimestamp: payload.lastTimestamp,
+        };
+        applyLogsResponse(response, { append: true });
+      },
+    });
+  }, [serverId, lineCount, applyLogsResponse, stopStream, t]);
+
+  const startRealTimeUpdates = useCallback(() => {
+    startStream();
+  }, [startStream]);
+
+  useEffect(() => {
+    startRealTimeUpdatesRef.current = startRealTimeUpdates;
+  });
+
+  const stopRealTimeUpdates = useCallback(() => {
+    stopStream();
+  }, [stopStream]);
 
   const toggleRealTime = useCallback(() => {
     setIsRealTime((prev) => {
@@ -236,13 +302,16 @@ export function useServerLogs(serverId: string, serverStatus: LogsServerStatus =
   }, [startRealTimeUpdates, stopRealTimeUpdates]);
 
   const fetchLogs = useCallback(async () => {
+    if (activeServerRef.current !== serverId) return "";
     setLoading(true);
     setError(null);
     try {
       const data = await getServerLogsStream(serverId, lineCount);
+      if (activeServerRef.current !== serverId) return "";
       applyLogsResponse(data as LogsResponse, { append: false });
       return (data as LogsResponse).logs;
     } catch (err) {
+      if (activeServerRef.current !== serverId) return "";
       console.error("Error fetching logs:", err);
       const errorMessage = err instanceof Error ? err.message : t("unknownError");
       setError({ type: "unknown", message: errorMessage });
@@ -250,9 +319,38 @@ export function useServerLogs(serverId: string, serverStatus: LogsServerStatus =
       mcToast.error(t("errorGettingLogsServer"));
       return "";
     } finally {
-      setLoading(false);
+      if (activeServerRef.current === serverId) {
+        setLoading(false);
+      }
     }
   }, [serverId, lineCount, applyLogsResponse, t]);
+
+  useEffect(() => {
+    activeServerRef.current = serverId;
+    setSearchTerm("");
+    setLevelFilter("all");
+    setLogEntries([]);
+    setLogs("");
+    setHasErrors(false);
+    setError(null);
+    setStreamError(null);
+    setLastUpdate(null);
+    lastTimestampRef.current = null;
+    isInitialLoadRef.current = true;
+
+    stopStream();
+
+    void fetchLogs();
+
+    if (isRealTimeRef.current) {
+      startRealTimeUpdates();
+    }
+
+    return () => {
+      activeServerRef.current = null;
+      stopRealTimeUpdates();
+    };
+  }, [serverId, fetchLogs, startRealTimeUpdates, stopRealTimeUpdates, stopStream]);
 
   useEffect(() => {
     if (isRealTime) {
@@ -260,28 +358,7 @@ export function useServerLogs(serverId: string, serverStatus: LogsServerStatus =
     } else {
       stopRealTimeUpdates();
     }
-
-    return () => {
-      stopRealTimeUpdates();
-    };
-  }, [isRealTime, startRealTimeUpdates, stopRealTimeUpdates]);
-
-  useEffect(() => {
-    // Reset the entire streaming state when the user navigates between
-    // servers. Next.js usually remounts the page, but defending against
-    // client-side reuse of the hook avoids leaking the previous server's
-    // entries, error label, and timestamp cursor into the new view.
-    setSearchTerm("");
-    setLevelFilter("all");
-    setLogEntries([]);
-    setLogs("");
-    setHasErrors(false);
-    setError(null);
-    setLastUpdate(null);
-    lastTimestampRef.current = null;
-    isInitialLoadRef.current = true;
-    previousLogsRef.current = "";
-  }, [serverId]);
+  }, [isRealTime, lineCount, startRealTimeUpdates, stopRealTimeUpdates]);
 
   const setLogLines = (lines: number) => {
     setLineCount(lines);
@@ -289,6 +366,7 @@ export function useServerLogs(serverId: string, serverStatus: LogsServerStatus =
 
   const clearError = () => {
     setError(null);
+    setStreamError(null);
   };
 
   const filteredLogEntries = useMemo(() => {
@@ -319,5 +397,7 @@ export function useServerLogs(serverId: string, serverStatus: LogsServerStatus =
     setLevelFilter,
     startRealTimeUpdates,
     stopRealTimeUpdates,
+    streamStatus,
+    streamError,
   };
 }

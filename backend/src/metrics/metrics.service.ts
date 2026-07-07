@@ -1,6 +1,8 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, MessageEvent, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { LessThan, MoreThanOrEqual, Repository } from 'typeorm';
+import { Observable, Subject, defer, interval, of } from 'rxjs';
+import { catchError, map, switchMap, takeUntil } from 'rxjs/operators';
 import { MetricSample } from './entities/metric-sample.entity';
 import { parseCpuPercent, parseMemoryToMb } from './metric-parse.util';
 import { ServerManagementService } from 'src/server-management/server-management.service';
@@ -8,6 +10,7 @@ import { AlertsService } from 'src/alerts/alerts.service';
 
 const SAMPLE_INTERVAL_MS = 60_000;
 const RETENTION_DAYS = 7;
+const LIVE_TICK_MS = 5_000;
 
 export interface MetricPoint {
   cpuPercent: number;
@@ -16,11 +19,21 @@ export interface MetricPoint {
   timestamp: string;
 }
 
+export interface MetricStreamPayload {
+  type: 'tick';
+  cpuPercent: number | null;
+  memoryMb: number | null;
+  memoryLimitMb: number | null;
+  status: 'running' | 'stopped' | 'starting' | 'not_found';
+  timestamp: string;
+}
+
 @Injectable()
 export class MetricsService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(MetricsService.name);
   private timer: NodeJS.Timeout | null = null;
   private sampling = false;
+  private readonly moduleDestroy$ = new Subject<void>();
 
   constructor(
     @InjectRepository(MetricSample)
@@ -40,6 +53,8 @@ export class MetricsService implements OnModuleInit, OnModuleDestroy {
       clearInterval(this.timer);
       this.timer = null;
     }
+    this.moduleDestroy$.next();
+    this.moduleDestroy$.complete();
   }
 
   async getHistory(serverId: string, hours: number): Promise<MetricPoint[]> {
@@ -55,6 +70,62 @@ export class MetricsService implements OnModuleInit, OnModuleDestroy {
       memoryLimitMb: sample.memoryLimitMb,
       timestamp: sample.createdAt.toISOString(),
     }));
+  }
+
+  streamLive(serverId: string): Observable<MessageEvent> {
+    const tick$ = interval(LIVE_TICK_MS).pipe(
+      takeUntil(this.moduleDestroy$),
+      switchMap(() =>
+        defer(async () => {
+          const resources = await this.serverManagement.getAllServersResources();
+          const data = resources[serverId];
+          const timestamp = new Date().toISOString();
+          if (!data) {
+            return {
+              type: 'tick' as const,
+              cpuPercent: null,
+              memoryMb: null,
+              memoryLimitMb: null,
+              status: 'not_found' as const,
+              timestamp,
+            };
+          }
+          if (data.status !== 'running') {
+            return {
+              type: 'tick' as const,
+              cpuPercent: null,
+              memoryMb: null,
+              memoryLimitMb: parseMemoryToMb(data.memoryConfigLimit),
+              status: data.status,
+              timestamp,
+            };
+          }
+          return {
+            type: 'tick' as const,
+            cpuPercent: parseCpuPercent(data.cpuUsage),
+            memoryMb: parseMemoryToMb(data.memoryUsage),
+            memoryLimitMb: parseMemoryToMb(data.memoryLimit) ?? parseMemoryToMb(data.memoryConfigLimit),
+            status: 'running' as const,
+            timestamp,
+          };
+        }).pipe(
+          catchError((error) => {
+            this.logger.warn(`SSE metrics tick failed for ${serverId}: ${(error as Error).message}`);
+            return of<MetricStreamPayload>({
+              type: 'tick',
+              cpuPercent: null,
+              memoryMb: null,
+              memoryLimitMb: null,
+              status: 'not_found',
+              timestamp: new Date().toISOString(),
+            });
+          }),
+        ),
+      ),
+      map((payload) => ({ data: payload }) as MessageEvent),
+    );
+
+    return tick$;
   }
 
   private async collectSamples(): Promise<void> {

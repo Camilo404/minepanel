@@ -39,16 +39,6 @@ export const QuickCommandConsole: FC<QuickCommandConsoleProps> = ({ serverId, rc
         </div>
       )}
 
-      {hasRconConfigured && !isServerRunning && (
-        <div className="flex items-start gap-2 px-2.5 py-1.5 mc-slot" style={{ borderColor: "var(--mc-gold)" }}>
-          <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0 text-yellow-300" />
-          <div className="text-[11px] text-yellow-200">
-            <span className="font-minecraft">{t("serverNotRunning2")}</span>
-            <span className="text-yellow-300/70"> — {t("startServerToExecute")}</span>
-          </div>
-        </div>
-      )}
-
       {/* Title + input row */}
       <div className="space-y-1.5">
         <div className="flex items-center gap-2 text-gray-300 font-minecraft text-[11px]">

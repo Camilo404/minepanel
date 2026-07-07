@@ -16,6 +16,15 @@ async function bootstrap() {
 
   app.use(cookieParser());
 
+  app.use((req, res, next) => {
+    if (req.path.endsWith('/sse') || req.path.endsWith('/stream')) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, no-transform');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.setHeader('Connection', 'keep-alive');
+    }
+    next();
+  });
+
   const basePath = (process.env.BASE_PATH || '').split('#')[0].trim();
   if (basePath) {
     app.setGlobalPrefix(basePath);

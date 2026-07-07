@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, MessageEvent, OnModuleDestroy } from '@nestjs/common';
 import { exec, spawn } from 'node:child_process';
 import type { ExecOptions, SpawnOptionsWithoutStdio } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -7,6 +7,8 @@ import * as fs from 'fs-extra';
 import * as yaml from 'js-yaml';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Not, IsNull } from 'typeorm';
+import { Observable, Subject, of } from 'rxjs';
+import { takeUntil } from 'rxjs/operators';
 import { Settings } from 'src/users/entities/settings.entity';
 import { DiscordService, ServerEventType, SupportedLanguage } from 'src/discord/discord.service';
 import { ConfigService } from '@nestjs/config';
@@ -78,6 +80,7 @@ export interface ServerLogsResponse {
     warningCount: number;
   };
   hasNewContent?: boolean;
+  lastTimestamp?: string;
 }
 
 export interface CommandExecutionResponse {
@@ -111,8 +114,29 @@ export interface AvailableWorld {
   copied: boolean;
 }
 
+const POLL_INTERVAL_MS = 1_500;
+
+export interface LogsStreamTickPayload {
+  type: 'tick';
+  logs: string;
+  hasErrors: boolean;
+  status: 'running' | 'stopped' | 'starting' | 'not_found';
+  lastTimestamp?: string;
+  hasNewContent: boolean;
+}
+
+export interface LogsStreamTerminalPayload {
+  type: 'terminal';
+  status: 'stopped' | 'not_found';
+  logs: string;
+  hasErrors: boolean;
+  reason: 'container_gone' | 'server_gone';
+}
+
+export type LogsStreamPayload = LogsStreamTickPayload | LogsStreamTerminalPayload;
+
 @Injectable()
-export class ServerManagementService {
+export class ServerManagementService implements OnModuleDestroy {
   private readonly logger = new Logger(ServerManagementService.name);
   private readonly SERVERS_DIR: string;
   private readonly BASE_DIR: string;
@@ -122,6 +146,7 @@ export class ServerManagementService {
   private containerSnapshotPromise: Promise<ContainerSnapshot> | null = null;
   private statsSnapshot: { byId: Record<string, { cpuUsage: string; memoryUsage: string; memoryLimit: string }>; byName: Record<string, { cpuUsage: string; memoryUsage: string; memoryLimit: string }>; fetchedAt: number } | null = null;
   private statsSnapshotPromise: Promise<NonNullable<typeof this.statsSnapshot>> | null = null;
+  private readonly moduleDestroy$ = new Subject<void>();
 
   constructor(
     private readonly configService: ConfigService,
@@ -137,8 +162,118 @@ export class ServerManagementService {
     fs.ensureDirSync(this.getGlobalWorldsPath());
   }
 
+  onModuleDestroy(): void {
+    this.moduleDestroy$.next();
+    this.moduleDestroy$.complete();
+  }
+
   private validateServerId(serverId: string): boolean {
     return /^[a-zA-Z0-9_-]+$/.test(serverId);
+  }
+
+  validateServerIdPublic(serverId: string): boolean {
+    return this.validateServerId(serverId);
+  }
+
+  streamLogs(serverId: string, lines: number, since?: string): Observable<MessageEvent> {
+    if (!this.validateServerId(serverId)) {
+      const invalid: LogsStreamPayload = { type: 'terminal', status: 'not_found', logs: 'Invalid server ID', hasErrors: true, reason: 'server_gone' };
+      return of<MessageEvent>({ data: invalid } as MessageEvent);
+    }
+
+    const safeLines = lines > 0 ? Math.min(lines, 5_000) : 500;
+
+    const extractTimestamp = (logs: string): string | undefined => {
+      const linesArr = logs.split('\n').filter((line) => line.trim());
+      if (linesArr.length === 0) return undefined;
+      const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z)/.exec(linesArr[linesArr.length - 1]);
+      if (!match) return undefined;
+      const ts = new Date(match[1]);
+      ts.setMilliseconds(ts.getMilliseconds() + 1);
+      return ts.toISOString();
+    };
+
+    return new Observable<MessageEvent>((subscriber) => {
+      let cursor: string | undefined = since;
+      let cancelled = false;
+      let intervalId: NodeJS.Timeout | null = null;
+
+      const destroySub = this.moduleDestroy$.subscribe(() => {
+        cancelled = true;
+        subscriber.complete();
+      });
+
+      const emit = (payload: LogsStreamPayload) => {
+        if (cancelled) return;
+        subscriber.next({ data: payload } as MessageEvent);
+        if (payload.type === 'terminal') {
+          cancelled = true;
+          subscriber.complete();
+        }
+      };
+
+      const tickOnce = async () => {
+        if (cancelled) return;
+        try {
+          if (!cursor) {
+            const snapshot = await this.getServerLogsStream(serverId, safeLines);
+            if (cancelled) return;
+            if (snapshot.status === 'not_found') {
+              emit({ type: 'terminal', status: 'not_found', logs: 'Server not found', hasErrors: false, reason: 'server_gone' });
+              return;
+            }
+            if (snapshot.status === 'stopped' || snapshot.status === 'starting') {
+              emit({ type: 'terminal', status: 'stopped', logs: 'Container not found', hasErrors: false, reason: 'container_gone' });
+              return;
+            }
+            cursor = snapshot.lastTimestamp ?? extractTimestamp(snapshot.logs);
+            emit({
+              type: 'tick',
+              logs: snapshot.logs,
+              hasErrors: snapshot.hasErrors,
+              status: snapshot.status,
+              lastTimestamp: cursor,
+              hasNewContent: true,
+            });
+            return;
+          }
+
+          const result = await this.getServerLogsSince(serverId, cursor);
+          if (cancelled) return;
+          if (result.status === 'not_found') {
+            emit({ type: 'terminal', status: 'not_found', logs: 'Server not found', hasErrors: false, reason: 'server_gone' });
+            return;
+          }
+          if (result.status === 'stopped' || result.status === 'starting') {
+            emit({ type: 'terminal', status: 'stopped', logs: 'Container not found', hasErrors: false, reason: 'container_gone' });
+            return;
+          }
+          cursor = result.lastTimestamp ?? cursor;
+          emit({
+            type: 'tick',
+            logs: result.logs,
+            hasErrors: result.hasErrors,
+            status: result.status,
+            lastTimestamp: cursor,
+            hasNewContent: result.hasNewContent,
+          });
+        } catch (error) {
+          this.logger.warn(`SSE logs tick failed for ${serverId}: ${(error as Error).message}`);
+        }
+      };
+
+      void tickOnce();
+      intervalId = setInterval(() => { void tickOnce(); }, POLL_INTERVAL_MS);
+
+      return () => {
+        cancelled = true;
+        if (intervalId) {
+          clearInterval(intervalId);
+          intervalId = null;
+        }
+        destroySub.unsubscribe();
+      };
+    }).pipe(takeUntil(this.moduleDestroy$));
   }
 
   private isContainerMissingError(error: unknown): boolean {
@@ -1475,12 +1610,25 @@ export class ServerManagementService {
       const hasNewContent = logs.trim().length > 0;
       const logAnalysis = this.analyzeLogs(logs);
 
+      let lastTimestamp: string | undefined;
+      if (hasNewContent) {
+        const lines = logs.split('\n').filter((line) => line.trim());
+        const lastLine = lines[lines.length - 1];
+        const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z)/.exec(lastLine);
+        if (match) {
+          const parsed = new Date(match[1]);
+          parsed.setMilliseconds(parsed.getMilliseconds() + 1);
+          lastTimestamp = parsed.toISOString();
+        }
+      }
+
       return {
         logs,
         hasErrors: logAnalysis.hasErrors,
         lastUpdate: new Date(),
         status: serverStatus,
         hasNewContent,
+        lastTimestamp,
       };
     } catch (error) {
       if (this.isContainerMissingError(error)) {

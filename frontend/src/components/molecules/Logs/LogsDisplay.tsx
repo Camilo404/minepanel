@@ -33,12 +33,23 @@ const levelDot: Record<LogEntry["level"], string> = {
 export const LogsDisplay: FC<LogsDisplayProps> = ({ logsContainerRef, filteredLogEntries, logs, loading, error, hasErrors, handleRefreshLogs }) => {
   const { t } = useLanguage();
 
-  const statusLabel = error ? t("error") : hasErrors ? t("withErrors") : t("console");
-  const statusColor = error
+  const isStoppedState = error?.type === "container_not_found" || error?.type === "server_not_found";
+  const isRealError = error !== null && !isStoppedState;
+
+  const statusLabel = isRealError
+    ? t("error")
+    : isStoppedState
+      ? t("serverNotRunning")
+      : hasErrors
+        ? t("withErrors")
+        : t("console");
+  const statusColor = isRealError
     ? "bg-red-800/80 text-red-300 border-red-700"
-    : hasErrors
-      ? "bg-yellow-800/80 text-yellow-200 border-yellow-700"
-      : "bg-emerald-800/70 text-emerald-200 border-emerald-700";
+    : isStoppedState
+      ? "bg-gray-800/80 text-gray-300 border-gray-600"
+      : hasErrors
+        ? "bg-yellow-800/80 text-yellow-200 border-yellow-700"
+        : "bg-emerald-800/70 text-emerald-200 border-emerald-700";
 
   return (
     <div className="mx-4 mb-3">
@@ -58,7 +69,7 @@ export const LogsDisplay: FC<LogsDisplayProps> = ({ logsContainerRef, filteredLo
           ref={logsContainerRef}
           className={cn(
             "logs-container px-3 py-2.5 overflow-x-hidden overflow-y-auto text-[11px] font-mono scrollbar-thin h-[480px] max-w-full break-words [overflow-wrap:anywhere] whitespace-pre-wrap",
-            error ? "bg-red-950/40 text-red-300" : hasErrors ? "bg-yellow-950/15 text-emerald-300" : "bg-gray-950/85 text-emerald-300"
+            isRealError ? "bg-red-950/40 text-red-300" : isStoppedState ? "bg-gray-950/85 text-gray-400" : hasErrors ? "bg-yellow-950/15 text-emerald-300" : "bg-gray-950/85 text-emerald-300"
           )}
         >
           {filteredLogEntries.length > 0 ? (
@@ -75,6 +86,11 @@ export const LogsDisplay: FC<LogsDisplayProps> = ({ logsContainerRef, filteredLo
                 </div>
               ))}
             </div>
+          ) : isStoppedState ? (
+            <div className="flex h-full flex-col items-center justify-center gap-3 text-gray-400">
+              <Image src="/images/chest.webp" alt="Server not running" width={56} height={56} className="pixelated opacity-70" />
+              <p className="font-minecraft text-sm">{t("serverNotRunning")}</p>
+            </div>
           ) : logs ? (
             <div className="minecraft-log">
               <AnsiText text={logs} />
@@ -85,12 +101,12 @@ export const LogsDisplay: FC<LogsDisplayProps> = ({ logsContainerRef, filteredLo
               <span className="font-minecraft text-xs">{t("loadingLogs")}</span>
               <Image src="/images/loading-cube.webp" alt="Loading" width={28} height={28} className="animate-pulse" />
             </div>
-          ) : error ? (
+          ) : isRealError ? (
             <div className="flex h-full flex-col items-center justify-center gap-3 text-red-300">
               <XCircle className="h-12 w-12 opacity-70" />
-              <div className="text-center">
-                <span className="font-minecraft text-sm block mb-1">{t("errorLoadingLogs")}</span>
-                <span className="text-[10px] text-red-300/80">{error.message}</span>
+              <div className="text-center space-y-1 max-w-md px-4">
+                <p className="font-minecraft text-sm">{t("errorLoadingLogs")}</p>
+                <p className="text-[10px] text-red-300/80">{error.message}</p>
               </div>
               <button onClick={handleRefreshLogs} className="mc-btn mc-btn-gold px-3 py-1.5 text-[11px]">
                 <RefreshCcw className="w-3.5 h-3.5" />

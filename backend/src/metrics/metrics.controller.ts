@@ -1,4 +1,5 @@
-import { Controller, Get, Param, Query, Request, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, Query, Request, UseGuards, Sse, MessageEvent } from '@nestjs/common';
+import { Observable } from 'rxjs';
 import { JwtAuthGuard } from 'src/auth/guards/auth.guard';
 import { PayloadToken } from 'src/auth/models/token.model';
 import { AccessControlService } from 'src/users/services/access-control.service';
@@ -29,5 +30,13 @@ export class MetricsController {
 
     const points = await this.metricsService.getHistory(id, safeHours);
     return { serverId: id, hours: safeHours, points };
+  }
+
+  @Sse(':id/stream')
+  async streamMetrics(@Request() req, @Param('id') id: string): Promise<Observable<MessageEvent>> {
+    const payload = req.user as PayloadToken;
+    const user = await this.usersService.getRequiredUserById(payload.userId);
+    this.accessControlService.assertServerAccess(user, id);
+    return this.metricsService.streamLive(id);
   }
 }

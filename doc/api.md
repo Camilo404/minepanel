@@ -115,6 +115,11 @@ Typical examples:
 - `POST /servers/:id/stop`
 - `POST /servers/:id/restart`
 - `GET /servers/:id/logs`
+- `GET /servers/:id/logs/stream?lines=500&since=<isoTimestamp>` — REST snapshot used as the initial payload and as a polling fallback for the SSE stream.
+- `GET /servers/:id/logs/sse?lines=500&since=<isoTimestamp>` — SSE stream of container logs (see [Streaming](#streaming-sse)). Initial cursor comes from the `since` query param when present (used by the frontend's reconnect path); otherwise the server tails `lines` first and then streams new content keyed on each event's `lastTimestamp`.
+- `POST /servers/:id/clear-data`
+- `DELETE /servers/:id`
+- `POST /servers/regenerate-all` — admin only; regenerates every server's `docker-compose.yml`.
 
 ### Files
 
@@ -146,6 +151,35 @@ Examples:
 - `GET /settings`
 - `PATCH /settings`
 - `POST /settings/test-discord-webhook`
+
+### Metrics
+
+Per-server CPU and memory history plus a live stream:
+
+- `GET /metrics/:id/history?hours=24` — historic samples (1-min cadence, max 168 h).
+- `GET /metrics/:id/stream` — SSE stream of live CPU/memory snapshots (every 5 s; see [Streaming](#streaming-sse)).
+
+### Audit
+
+Append-only action log used to diagnose "who stopped the server?":
+
+- `GET /audit?userId=&action=&outcome=&serverId=&dateFrom=&dateTo=&limit=200` — admin/manageUsers only.
+
+### Streaming (SSE)
+
+The backend exposes Server-Sent Events for log tails and live metrics. Both rely on the session cookies; the global JWT guard still protects them.
+
+Event format (every event uses the SSE `data:` line as a JSON object):
+
+- **logs** (`GET /servers/:id/logs/sse`)
+  - `{ type: "tick", logs, hasErrors, status, lastTimestamp, hasNewContent, metadata? }` — incremental log payload. Use the returned `lastTimestamp` as the next cursor (only relevant for the REST fallback; SSE itself tracks the cursor server-side).
+  - `{ type: "terminal", status: "stopped" | "not_found", logs, hasErrors, reason: "container_gone" | "server_gone" }` — last event before the server closes the stream (container stopped or server removed).
+- **metrics** (`GET /metrics/:id/stream`)
+  - `{ type: "tick", cpuPercent, memoryMb, memoryLimitMb, status: "running", timestamp }` — running snapshot every 5 s.
+  - `{ type: "tick", ..., status: "stopped" | "starting" }` — null CPU/memory with the configured limit, while the container is not actively running.
+  - `{ type: "terminal", status: "not_found", ... }` — the server entry is gone.
+
+The frontend uses `fetch + ReadableStream` (`frontend/src/lib/sse-client.ts`) instead of the native `EventSource` so the HttpOnly session cookie reaches the cross-origin backend.
 
 ### Users
 

@@ -18,17 +18,18 @@ backend/src/
 |- config.ts
 |- auth/                    Global JWT guard, public auth endpoints, cookie session flow
 |  |- oidc/                 OpenID Connect SSO (provider-agnostic) -> issues Minepanel session
-|- server-management/       Runtime control, status, logs, commands
+|- server-management/       Runtime control, status, logs (REST + SSE), commands, audit hooks
 |  |- strategies/           Java/Bedrock strategy pattern
+|  |- sse-logs.service.ts   SSE log stream emitter (polls docker logs --since, emits MessageEvents)
 |- docker-compose/          Compose generation and server config persistence
 |- files/                   File browser API over server directories
 |- world-discovery/         World import/discovery into global world library
 |- proxy/                   mc-router routes.json generation
 |- system-monitoring/       Host metrics
-|- metrics/                 Per-server CPU/RAM history (1-min sampler, query API)
+|- metrics/                 Per-server CPU/RAM history (1-min sampler, query API, live SSE stream)
 |- alerts/                  Per-server Discord alerts (down / high CPU / high RAM), fed by the metrics sampler
 |- scheduled-tasks/         Auto-restart and scheduled commands (fixed interval or cron expression via cron-parser)
-|- users/                   User and settings persistence
+|- users/                   User and settings persistence, audit log entity/service/controller
 |- database/                TypeORM/sql.js setup
 ```
 
@@ -86,11 +87,17 @@ Path and filesystem patterns (critical):
 - `src/main.ts` - CORS/cookies/bootstrap behavior.
 - `src/server-management/server-management.service.ts` - lifecycle, status, command execution, world selection.
 - `src/server-management/strategies/server-strategy.factory.ts` - Java/Bedrock strategy selection.
+- `src/server-management/sse-logs.service.ts` - SSE log stream emitter; owns the `Observable<MessageEvent>` and the polling/`--since` cursor.
+- `src/server-management/server-management.controller.ts` - REST + SSE endpoints; records `audit_logs` entries for sensitive actions.
 - `src/docker-compose/docker-compose.service.ts` - compose generation, path-to-volume mapping, server discovery.
 - `src/files/files.service.ts` - path validation and file API boundaries.
 - `src/files/files.controller.ts` - upload/download API behavior.
 - `src/world-discovery/world-discovery.service.ts` - `.world` library import path.
 - `src/proxy/proxy.service.ts` - proxy routes file path behavior.
+- `src/users/services/audit-log.service.ts` - audit log persistence with retention cleanup.
+- `src/users/services/access-control.service.ts` - permission checks (`assertViewLogs`, `assertUseConsole`, etc.).
+- `src/metrics/metrics.service.ts` - 1-min sampler + `streamLive()` SSE emitter.
+- `src/metrics/metrics.controller.ts` - history endpoint + `@Sse()` stream endpoint.
 - `package.json` - backend scripts.
 
 ## Agent-Specific Instructions
@@ -137,6 +144,56 @@ Files module behavior:
   the actual data without the user manually drilling into the nested
   `servers/` folder.
 - Preserve traversal protection (`normalize` + `startsWith(basePath)`).
+
+Server-Sent Events (logs and metrics):
+
+- `ServerManagementService.streamLogs(serverId, lines, since?)` returns
+  `Observable<MessageEvent>` and implements `OnModuleDestroy` to abort
+  every active stream on shutdown. Initial cursor comes from the optional
+  `since=` query param (frontend passes the last known `lastTimestamp` on
+  reconnect); otherwise it does an initial `docker logs --tail N --timestamps`
+  and then polls every 1.5s with `docker logs --since <cursor>` until the
+  container disappears or the client disconnects.
+- `MetricsService.streamLive(serverId)` uses `interval(5000).pipe(takeUntil(moduleDestroy$))`
+  and reuses `getAllServersResources()` (1.5s TTL). It never terminates on
+  transient `not_found`; a missing server just emits a tick with
+  `status: 'not_found'` and `cpuPercent`/`memoryMb` set to `null`. The
+  frontend filters null points out of the chart series, so a `stopped` /
+  not-yet-discovered container doesn't paint "0%" on the graph.
+- Controller methods decorated with `@Sse()` can be `async`; do the
+  permission check via `await` and then return the Observable. The global
+  `JwtAuthGuard` covers SSE endpoints through cookies; CORS must keep
+  `credentials: true` (already in `main.ts`).
+- `main.ts` adds response headers for SSE paths (`Cache-Control: no-cache,
+  no-store, no-transform`, `X-Accel-Buffering: no`, `Connection: keep-alive`)
+  so reverse proxies (nginx, Cloudflare) stop buffering the stream.
+- Treat `@Sse()` endpoints like REST endpoints for permission checks:
+  call `AccessControlService.assertViewLogs` / `assertServerAccess` before
+  constructing the stream.
+- Frontend uses `fetch + ReadableStream` (see `frontend/src/lib/sse-client.ts`)
+  rather than `EventSource`. The native EventSource sends no cookies cross-origin;
+  the SSE client uses `credentials: 'include'` so the HttpOnly JWT cookie
+  reaches the backend. Reconnects use exponential backoff with jitter
+  (1s → 30s cap) and pass `since=<lastTimestamp>` as a query parameter on
+  resume so the server skips the initial tail.
+
+Audit log:
+
+- `AuditLogService.record(input)` persists entries to `audit_logs` (TypeORM,
+  sql.js). Failures are logged but never thrown (audit must never block a
+  user action); `pruneExpired()` keeps retention at the configured
+  `auditRetentionDays` preference (default 15).
+- The `ServerManagementController` calls `recordServerAudit` for sensitive
+  actions: `start_server`, `stop_server`, `restart_server`, `execute_server_command`,
+  `create_server`, `update_server_config`, `clone_server`, `delete_server`,
+  `clear_server_data`, `select_world`, `regenerate_all_compose` (admin only).
+- `recordServerAudit(user, fallbackUsername, action, ...)` accepts a JWT
+  username fallback so audit entries are still recorded when the actor has
+  no DB row (e.g. dev mode without UsersService injected). When both are
+  absent the entry is logged under `actorUsername: 'system'`.
+- `GET /audit` is admin/manageUsers-only. The DTO (`AuditLogQueryDto`) caps
+  `limit` at 500 and validates `action`, `outcome`, `dateFrom`, `dateTo`,
+  `serverId`, `userId`.
 
 Data migration and compatibility:
 

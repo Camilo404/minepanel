@@ -1,4 +1,4 @@
-import { FC, type MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FC, type MouseEvent as ReactMouseEvent, useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -6,9 +6,11 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Activity, Bell, Cpu, Loader2, MemoryStick, RefreshCw } from "lucide-react";
 import { useLanguage } from "@/lib/hooks/useLanguage";
-import { getServerMetrics, MetricPoint } from "@/services/metrics/metrics.service";
+import { MetricPoint } from "@/services/metrics/metrics.service";
+import { useServerMetricsStream } from "@/lib/hooks/useServerMetricsStream";
 import { AlertConfig, getAlertConfig, updateAlertConfig } from "@/services/alerts/alerts.service";
 import { mcToast } from "@/lib/utils/minecraft-toast";
+import { LiveIndicator } from "@/components/molecules/LiveIndicator";
 
 interface MetricsTabProps {
   serverId: string;
@@ -20,8 +22,6 @@ const RANGES = [
   { hours: 24, label: "24h" },
   { hours: 72, label: "72h" },
 ];
-
-const REFRESH_MS = 60_000;
 
 const X_TICKS = 4;
 const CHART_HEIGHT = 160;
@@ -228,26 +228,8 @@ const AlertsCard: FC<{ serverId: string }> = ({ serverId }) => {
 export const MetricsTab: FC<MetricsTabProps> = ({ serverId }) => {
   const { t } = useLanguage();
   const [hours, setHours] = useState(24);
-  const [points, setPoints] = useState<MetricPoint[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  const fetchMetrics = useCallback(async () => {
-    setLoading(true);
-    try {
-      const history = await getServerMetrics(serverId, hours);
-      setPoints(history.points);
-    } catch {
-      setPoints([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [serverId, hours]);
-
-  useEffect(() => {
-    fetchMetrics();
-    const interval = setInterval(fetchMetrics, REFRESH_MS);
-    return () => clearInterval(interval);
-  }, [fetchMetrics]);
+  const { combinedPoints, loading, refresh, status, error: streamError } = useServerMetricsStream(serverId, { hours });
+  const points = combinedPoints;
 
   const memoryLimit = useMemo(() => {
     const limits = points.map((point) => point.memoryLimitMb ?? 0).filter((value) => value > 0);
@@ -281,13 +263,19 @@ export const MetricsTab: FC<MetricsTabProps> = ({ serverId }) => {
                   {range.label}
                 </Button>
               ))}
-              <Button type="button" size="sm" variant="outline" className="bg-gray-800/60 border-gray-600 text-gray-200 hover:bg-gray-700 hover:text-white" onClick={fetchMetrics} disabled={loading}>
+              <Button type="button" size="sm" variant="outline" className="bg-gray-800/60 border-gray-600 text-gray-200 hover:bg-gray-700 hover:text-white" onClick={() => void refresh()} disabled={loading}>
                 <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
               </Button>
+              <LiveIndicator status={status} />
             </div>
           </div>
         </CardHeader>
         <CardContent className="space-y-6">
+          {streamError && (
+            <div className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+              {t("streamError")}: {streamError}
+            </div>
+          )}
           {!hasData && <p className="text-sm text-gray-400 py-8 text-center">{t("metricsEmpty")}</p>}
 
           {hasData && (

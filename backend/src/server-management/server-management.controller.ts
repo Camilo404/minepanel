@@ -1,4 +1,5 @@
-import { Controller, Get, Post, Body, Param, NotFoundException, Put, Query, BadRequestException, ValidationPipe, Delete, UseGuards, Request, ForbiddenException, Optional } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, NotFoundException, Put, Query, BadRequestException, ValidationPipe, Delete, UseGuards, Request, ForbiddenException, Optional, Sse, MessageEvent } from '@nestjs/common';
+import { Observable } from 'rxjs';
 import { DockerComposeService } from 'src/docker-compose/docker-compose.service';
 import { ServerManagementService } from './server-management.service';
 import { ServerConfig, UpdateServerConfigDto } from './dto/server-config.model';
@@ -55,14 +56,22 @@ export class ServerManagementController {
     private readonly auditLogService: AuditLogService,
   ) {}
 
-  private async recordServerAudit(user: Users | null, action: string, serverId: string, summary: string, outcome: 'success' | 'error' = 'success', metadata?: Record<string, unknown>) {
-    if (!user || !this.auditLogService) {
+  private async recordServerAudit(
+    user: Users | null,
+    fallbackUsername: string | null,
+    action: string,
+    serverId: string,
+    summary: string,
+    outcome: 'success' | 'error' = 'success',
+    metadata?: Record<string, unknown>,
+  ) {
+    if (!this.auditLogService) {
       return;
     }
 
     await this.auditLogService.record({
-      actorUserId: user.id,
-      actorUsername: user.username,
+      actorUserId: user?.id ?? null,
+      actorUsername: user?.username ?? fallbackUsername ?? 'system',
       category: 'servers',
       action,
       outcome,
@@ -70,6 +79,11 @@ export class ServerManagementController {
       summary,
       metadata,
     });
+  }
+
+  private jwtActor(req): string | null {
+    const user = req?.user as PayloadToken | undefined;
+    return user?.username ?? null;
   }
 
   private async getCurrentUser(req): Promise<Users> {
@@ -217,6 +231,8 @@ export class ServerManagementController {
         await this.proxyService.generateRoutesFile(proxyServers, baseDomain);
       }
 
+      await this.recordServerAudit(currentUser, this.jwtActor(req), 'create_server', id, `Created server ${id}`);
+
       return {
         success: true,
         message: `Server "${id}" created successfully`,
@@ -278,7 +294,7 @@ export class ServerManagementController {
         await this.proxyService.generateRoutesFile(proxyServers, baseDomain);
       }
 
-      await this.recordServerAudit(currentUser, 'clone_server', body.newId, `Cloned server ${id} to ${body.newId}`, 'success', { sourceServerId: id });
+      await this.recordServerAudit(currentUser, this.jwtActor(req), 'clone_server', body.newId, `Cloned server ${id} to ${body.newId}`, 'success', { sourceServerId: id });
 
       return {
         success: true,
@@ -292,7 +308,7 @@ export class ServerManagementController {
 
   @Post('regenerate-all')
   async regenerateAllDockerCompose(@Request() req) {
-    await this.requireAdmin(req);
+    const currentUser = await this.requireAdmin(req);
     const user = req.user as PayloadToken;
     const settings = await this.settingsService.getSettings(user.userId);
     const proxyEnabled = settings.preferences?.proxyEnabled && !!settings.preferences?.proxyBaseDomain;
@@ -314,6 +330,8 @@ export class ServerManagementController {
     } else {
       await this.proxyService.clearRoutesFile();
     }
+
+    await this.recordServerAudit(currentUser, this.jwtActor(req), 'regenerate_all_compose', '*', `Regenerated ${result.updated.length} server compose files`);
 
     return {
       success: true,
@@ -352,6 +370,9 @@ export class ServerManagementController {
         await this.proxyService.generateRoutesFile(proxyServers, baseDomain);
       }
     }
+
+    const deletingUser = await this.getCurrentUser(req);
+    await this.recordServerAudit(deletingUser, this.jwtActor(req), 'delete_server', id, result ? `Deleted server ${id}` : `Failed to delete server ${id}`, result ? 'success' : 'error');
 
     return {
       success: result,
@@ -415,7 +436,7 @@ export class ServerManagementController {
       await this.proxyService.generateRoutesFile(proxyServers, baseDomain);
     }
 
-    await this.recordServerAudit(currentUser, 'update_server_config', id, `Updated server configuration for ${id}`);
+    await this.recordServerAudit(currentUser, this.jwtActor(req), 'update_server_config', id, `Updated server configuration for ${id}`);
 
     return updatedConfig;
   }
@@ -489,6 +510,17 @@ export class ServerManagementController {
       }
     }
 
+    const selectingUser = await this.getCurrentUser(req);
+    await this.recordServerAudit(
+      selectingUser,
+      this.jwtActor(req),
+      'select_world',
+      id,
+      `Selected world ${body.worldSource} (${selectedScope}) for ${id}${restarted ? ' and restarted' : ''}`,
+      'success',
+      { worldSource: body.worldSource, worldScope: selectedScope, worldLevelName, restarted },
+    );
+
     return {
       success: true,
       restarted,
@@ -504,7 +536,7 @@ export class ServerManagementController {
       currentUser = await this.requireServerAccess(resolved.req, resolved.id);
     }
     const result = await this.managementService.restartServer(resolved.id);
-    await this.recordServerAudit(currentUser, 'restart_server', resolved.id, result ? `Restarted server ${resolved.id}` : `Failed to restart server ${resolved.id}`, result ? 'success' : 'error');
+    await this.recordServerAudit(currentUser, this.jwtActor(resolved.req), 'restart_server', resolved.id, result ? `Restarted server ${resolved.id}` : `Failed to restart server ${resolved.id}`, result ? 'success' : 'error');
     return {
       success: result,
       message: result ? 'Server restarted successfully' : 'Failed to restart server',
@@ -529,6 +561,9 @@ export class ServerManagementController {
     if (result && config.edition === 'BEDROCK') {
       await this.bedrockAddonsService.clearAddonRuntimeState(id);
     }
+
+    const clearingUser = await this.getCurrentUser(req);
+    await this.recordServerAudit(clearingUser, this.jwtActor(req), 'clear_server_data', id, result ? `Cleared data for server ${id}` : `Failed to clear data for server ${id}`, result ? 'success' : 'error');
 
     return {
       success: result,
@@ -598,6 +633,14 @@ export class ServerManagementController {
     return this.managementService.getServerLogsStream(id, lineCount, since);
   }
 
+  @Sse(':id/logs/sse')
+  async streamServerLogs(@Request() req, @Param('id') id: string, @Query('lines') lines?: number, @Query('since') since?: string): Promise<Observable<MessageEvent>> {
+    const user = await this.getCurrentUser(req);
+    this.accessControlService.assertViewLogs(user, id);
+    const lineCount = lines && lines > 0 ? Math.min(lines, 5000) : 500;
+    return this.managementService.streamLogs(id, lineCount, since);
+  }
+
   @Get(':id/logs/since/:timestamp')
   async getServerLogsSince(@Request() req, @Param('id') id: string, @Param('timestamp') timestamp: string) {
     const user = await this.getCurrentUser(req);
@@ -615,7 +658,7 @@ export class ServerManagementController {
     const user = await this.getCurrentUser(req);
     this.accessControlService.assertUseConsole(user, id);
     const result = await this.managementService.executeCommand(id, body.command, body.rconPort, body.rconPassword);
-    await this.recordServerAudit(user, 'execute_server_command', id, `Executed command on ${id}: ${body.command}`, 'success', { command: body.command });
+    await this.recordServerAudit(user, this.jwtActor(req), 'execute_server_command', id, `Executed command on ${id}: ${body.command}`, 'success', { command: body.command });
     return result;
   }
 
@@ -627,7 +670,7 @@ export class ServerManagementController {
       currentUser = await this.requireServerAccess(resolved.req, resolved.id);
     }
     const result = await this.managementService.startServer(resolved.id);
-    await this.recordServerAudit(currentUser, 'start_server', resolved.id, result ? `Started server ${resolved.id}` : `Failed to start server ${resolved.id}`, result ? 'success' : 'error');
+    await this.recordServerAudit(currentUser, this.jwtActor(resolved.req), 'start_server', resolved.id, result ? `Started server ${resolved.id}` : `Failed to start server ${resolved.id}`, result ? 'success' : 'error');
     return {
       success: result,
       message: result ? 'Server started successfully' : 'Failed to start server',
@@ -642,7 +685,7 @@ export class ServerManagementController {
       currentUser = await this.requireServerAccess(resolved.req, resolved.id);
     }
     const result = await this.managementService.stopServer(resolved.id);
-    await this.recordServerAudit(currentUser, 'stop_server', resolved.id, result ? `Stopped server ${resolved.id}` : `Failed to stop server ${resolved.id}`, result ? 'success' : 'error');
+    await this.recordServerAudit(currentUser, this.jwtActor(resolved.req), 'stop_server', resolved.id, result ? `Stopped server ${resolved.id}` : `Failed to stop server ${resolved.id}`, result ? 'success' : 'error');
     return {
       success: result,
       message: result ? 'Server stopped successfully' : 'Failed to stop server',

@@ -28,10 +28,12 @@ frontend/src/
 |  |- world-discovery/          World import endpoints
 |  |- metrics/                  Per-server CPU/RAM history endpoints
 |  |- scheduler/                Scheduled tasks CRUD endpoints
+|  |- audit/                    Audit log query endpoint
 |- lib/
 |  |- store/                    Zustand stores
 |  |- translations/             i18n dictionaries
 |  |- hooks/                    Custom hooks
+|  |- sse-client.ts             fetch + ReadableStream SSE consumer
 ```
 
 Backend integration model:
@@ -104,6 +106,10 @@ Tooling / build (Next.js 16):
 - `src/services/axios.service.ts` - baseURL and credential behavior.
 - `src/services/docker/fetchs.ts` - core server API calls.
 - `src/services/files/files.service.ts` - files API contract.
+- `src/services/audit/audit.service.ts` - audit log query (admin/manageUsers).
+- `src/lib/sse-client.ts` - cross-origin SSE consumer (fetch + ReadableStream with `credentials: 'include'`).
+- `src/lib/hooks/useServerLogs.tsx` - logs hook; opens SSE for live tail, falls back to REST polling.
+- `src/lib/hooks/useServerMetricsStream.ts` - metrics hook; SSE appends live points to history buffer.
 - `src/components/molecules/FileBrowser/FileBrowser.tsx` - file management UX and upload/download behavior.
 - `src/app/dashboard/files/page.tsx` - global file browser entry (`_root`).
 - `src/app/dashboard/world-library/page.tsx` - world library entry (`.world`).
@@ -115,7 +121,8 @@ Tooling / build (Next.js 16):
 - `src/components/organisms/SidebarServerNav.tsx` - server tab nav rendered inside the sidebar drill-in (grouped config/operation/monitoring, filter input + `TabSearch` palette); selecting a tab sets the URL hash.
 - `src/lib/store/server-nav-store.ts` - shares the active server's tab list and active tab between the server page and the global sidebar.
 - `src/components/organisms/TabSearch.tsx` - command palette (Ctrl/Cmd+K) to jump to tabs and settings.
-- `src/components/molecules/Tabs/MetricsTab.tsx` - per-server CPU/RAM history chart.
+- `src/components/molecules/Tabs/MetricsTab.tsx` - per-server CPU/RAM history chart (live SSE tail).
+- `src/components/molecules/Tabs/LogsTab.tsx` - logs viewer; consumes `useServerLogs` so SSE updates flow through transparently.
 - `src/components/molecules/Tabs/ScheduledTasksTab.tsx` - scheduled tasks CRUD.
 - `src/lib/store/servers-store.ts`
 - `src/lib/translations/index.ts` and language files (`en.ts`, `es.ts`, `nl.ts`, `de.ts`, `fr.ts`, `pl.ts`)
@@ -154,6 +161,60 @@ i18n:
 
 - Any new user-facing key must be added to all active dictionaries (`en`, `es`, `nl`, `de`, `fr`, `pl`).
 - Keep key naming consistent; avoid one-off names that break translation structure.
+
+SSE / live streams:
+
+- Use `frontend/src/lib/sse-client.ts` (`openSse<T>(path, options)`) instead
+  of the native `EventSource`. The native API is locked to `same-origin`
+  credentials mode, which breaks the HttpOnly JWT cookie when the dev server
+  runs on `:3000` and the API on `:8091`. The SSE client uses
+  `fetch(url, { credentials: 'include' })` so the cookie always reaches the
+  backend.
+- Reconnects use exponential backoff with jitter (`1s → 30s` cap, see
+  `baseReconnectMs` / `maxReconnectMs`). The client remembers the last
+  `id:` it received per backend `MessageEvent` and resends it as
+  `since=<id>` on the next connection so the server can resume the cursor.
+- The handle exposes `status` (`'connecting' | 'open' | 'reconnecting' | 'closed'`)
+  and `reconnectAttempt` for UI indicators like `components/molecules/LiveIndicator.tsx`.
+- Hooks that consume SSE must own an `AbortController` ref keyed on
+  `serverId` / `[serverId, hours, etc.]` so navigating between servers
+  aborts the previous stream before opening the next one. Use a
+  `activeServerRef` ref compared against the closure's `serverId` so
+  late-arriving payloads from a previous connection can't leak into the
+  next server's buffer.
+- `useServerLogs` runs **both** an initial REST `fetchLogs()` and opens
+  the SSE connection on every `[serverId]` change. The REST call is a
+  safety net: if the SSE immediately emits `terminal: container_gone`
+  because the container is mid-startup, the user still sees a snapshot
+  instead of a stranded error. Once the SSE starts delivering real
+  ticks the content `Set` deduplicates them against the REST snapshot.
+  The SSE then owns the live tail on top of that snapshot.
+- `logEntries` IDs are stable FNV-1a hashes of the line content (see
+  `hashContent` in `useServerLogs.tsx`). React keys therefore never
+  churn across SSE ticks; duplicates are filtered by a content `Set`
+  in `parseLogsToEntries`. Do NOT switch back to `Date.now()-index`
+  ids — that's the regression that made the logs list "rerender itself"
+  every 1.5 s even with no new content.
+- `startRealTimeUpdates` does not guard against an existing handle.
+  `startStream` self-cleans via `stopStream` first, so calling it again
+  is always safe (and required after a `terminal` frame leaves the refs
+  null). Don't reintroduce the `if (sseHandleRef.current) return` bail.
+- On a `terminal: container_gone` frame the hook **does NOT** call
+  `stopStream()` unless `serverStatus ∈ {stopped, not_found, stopping}`.
+  This lets the `sse-client.ts` reconnect loop (exponential backoff,
+  see below) reattach once the container is up. When the user-driven
+  state flips from stopped → alive, the `[serverStatus]` effect
+  additionally calls `startRealTimeUpdates` for an immediate reattach
+  instead of waiting for the next backoff tick.
+- The logs section shows the streaming status in **exactly one place**:
+  the footer text ("Real time active" / "paused" / "with errors" /
+  "disconnected"). Do NOT add a second indicator such as a "LIVE" pill
+  in the title bar or a `<LiveIndicator>` chip in the toolbar; both
+  were removed because they duplicated the footer and one of them
+  (`LiveIndicator`) said "Live" instead of the user-preferred "active".
+- `useServerMetricsStream` returns `{ history, livePoints, combinedPoints, status, error, refresh }`
+  and filters null CPU/memory points out of `combinedPoints` so a
+  `stopped` / not-yet-discovered container doesn't paint `0%` on the chart.
 
 UI base components:
 
