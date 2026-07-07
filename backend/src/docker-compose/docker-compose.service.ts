@@ -1395,7 +1395,8 @@ export class DockerComposeService {
       return undefined;
     }
     const hostPath = entry.slice(0, -suffix.length);
-    return hostPath === this.resolveBackupsHostPath(serverId) ? undefined : hostPath;
+    const norm = (p: string): string => p.replace(/\\/g, '/');
+    return norm(hostPath) === norm(this.resolveBackupsHostPath(serverId)) ? undefined : hostPath;
   }
 
   private resolveBackupsHostPath(serverId: string, override?: string): string {
@@ -1403,9 +1404,9 @@ export class DockerComposeService {
       return override.trim();
     }
     if (this.BACKUP_BASE_DIR) {
-      return path.join(this.BACKUP_BASE_DIR, serverId);
+      return path.posix.join(this.BACKUP_BASE_DIR, serverId);
     }
-    return path.join(this.BASE_DIR, 'servers', serverId, 'backups');
+    return path.posix.join(this.BASE_DIR, 'servers', serverId, 'backups');
   }
 
   private async addBackupService(
@@ -1417,8 +1418,8 @@ export class DockerComposeService {
     const backupEnv = this.buildBackupEnvironment(config);
     this.addOptionalBackupEnv(backupEnv, config);
 
-    const mcDataPath = path.join(this.BASE_DIR, 'servers', config.id, 'mc-data');
-    const defaultBackupsPath = path.join(this.BASE_DIR, 'servers', config.id, 'backups');
+    const mcDataPath = path.posix.join(this.BASE_DIR, 'servers', config.id, 'mc-data');
+    const defaultBackupsPath = path.posix.join(this.BASE_DIR, 'servers', config.id, 'backups');
     const backupsPath = this.resolveBackupsHostPath(config.id, config.backupHostDir);
 
     dockerComposeConfig.services.backup = {

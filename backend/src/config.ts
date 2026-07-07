@@ -1,5 +1,5 @@
 import { execSync } from 'node:child_process';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import * as os from 'node:os';
 
 // The generated server compose files and the chown helper run against the host Docker
@@ -28,42 +28,55 @@ function detectHostBaseDir(): string | undefined {
   return undefined;
 }
 
-export default () => ({
-  jwtSecret: process.env.JWT_SECRET,
-  jwtExpiresIn: process.env.JWT_EXPIRES_IN || '2d',
-  jwtIssuer: process.env.JWT_ISSUER || 'minepanel',
-  jwtAudience: process.env.JWT_AUDIENCE || 'minepanel-users',
-  frontendUrl: process.env.FRONTEND_URL,
-  composeProject: process.env.COMPOSE_PROJECT,
-  defaultLanguage: process.env.DEFAULT_LANGUAGE ?? 'en',
-  passwordResetTokenExpiresInMinutes: Number(process.env.PASSWORD_RESET_TOKEN_EXPIRES_IN_MINUTES || 60),
-  oidc: {
-    issuer: process.env.OIDC_ISSUER,
-    clientId: process.env.OIDC_CLIENT_ID,
-    clientSecret: process.env.OIDC_CLIENT_SECRET,
-    redirectUri: process.env.OIDC_REDIRECT_URI,
-    scopes: process.env.OIDC_SCOPES || 'openid email profile',
-    providerName: process.env.OIDC_PROVIDER_NAME || 'SSO',
-    disablePasswordLogin: process.env.OIDC_DISABLE_PASSWORD_LOGIN === 'true',
-    enabled: !!(
-      process.env.OIDC_ISSUER &&
-      process.env.OIDC_CLIENT_ID &&
-      process.env.OIDC_CLIENT_SECRET &&
-      process.env.OIDC_REDIRECT_URI
-    ),
-  },
-  smtp: {
-    host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT || 587),
-    secure: process.env.SMTP_SECURE === 'true',
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-    from: process.env.SMTP_FROM,
-  },
-  serversDir: '/app/servers',
-  baseDir: detectHostBaseDir() || process.env.BASE_DIR || '/app',
-  backupBaseDir: process.env.BACKUP_BASE_DIR || undefined,
-  database: {
-    path: '/app/data/minepanel.db',
-  },
-});
+// NOTE: do NOT resolve paths at module load time. The .env file is loaded by
+// ConfigModule.forRoot() at runtime, so process.env.* is only populated when
+// this default export runs. Doing it at top-level would freeze empty values.
+export default () => {
+  // Detect whether we are running inside the Docker container. When yes, the
+  // container-internal paths (/app/...) are correct. When no (local dev), we
+  // derive them from BASE_DIR (env) or process.cwd().
+  const hostBaseDir = detectHostBaseDir();
+  const inContainer = hostBaseDir !== undefined;
+  const baseDir = hostBaseDir || process.env.BASE_DIR || process.cwd();
+  const containerPath = (sub: string) => (inContainer ? join('/app', sub) : join(baseDir, sub));
+
+  return {
+    jwtSecret: process.env.JWT_SECRET,
+    jwtExpiresIn: process.env.JWT_EXPIRES_IN || '2d',
+    jwtIssuer: process.env.JWT_ISSUER || 'minepanel',
+    jwtAudience: process.env.JWT_AUDIENCE || 'minepanel-users',
+    frontendUrl: process.env.FRONTEND_URL,
+    composeProject: process.env.COMPOSE_PROJECT,
+    defaultLanguage: process.env.DEFAULT_LANGUAGE ?? 'en',
+    passwordResetTokenExpiresInMinutes: Number(process.env.PASSWORD_RESET_TOKEN_EXPIRES_IN_MINUTES || 60),
+    oidc: {
+      issuer: process.env.OIDC_ISSUER,
+      clientId: process.env.OIDC_CLIENT_ID,
+      clientSecret: process.env.OIDC_CLIENT_SECRET,
+      redirectUri: process.env.OIDC_REDIRECT_URI,
+      scopes: process.env.OIDC_SCOPES || 'openid email profile',
+      providerName: process.env.OIDC_PROVIDER_NAME || 'SSO',
+      disablePasswordLogin: process.env.OIDC_DISABLE_PASSWORD_LOGIN === 'true',
+      enabled: !!(
+        process.env.OIDC_ISSUER &&
+        process.env.OIDC_CLIENT_ID &&
+        process.env.OIDC_CLIENT_SECRET &&
+        process.env.OIDC_REDIRECT_URI
+      ),
+    },
+    smtp: {
+      host: process.env.SMTP_HOST,
+      port: Number(process.env.SMTP_PORT || 587),
+      secure: process.env.SMTP_SECURE === 'true',
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS,
+      from: process.env.SMTP_FROM,
+    },
+    serversDir: containerPath('servers'),
+    baseDir,
+    backupBaseDir: process.env.BACKUP_BASE_DIR || undefined,
+    database: {
+      path: containerPath('data/minepanel.db'),
+    },
+  };
+};

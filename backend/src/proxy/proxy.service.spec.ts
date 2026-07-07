@@ -6,6 +6,9 @@ import * as yaml from 'js-yaml';
 import { ProxyService } from './proxy.service';
 import { Settings } from 'src/users/entities/settings.entity';
 
+const SURVIVAL_COMPOSE = '/app/servers/survival/docker-compose.yml';
+const matchCompose = (target: string) => target.replace(/\\/g, '/') === SURVIVAL_COMPOSE;
+
 jest.mock('fs-extra', () => ({
   ensureDir: jest.fn().mockResolvedValue(undefined),
   pathExists: jest.fn().mockResolvedValue(false),
@@ -46,7 +49,7 @@ describe('ProxyService', () => {
   });
 
   it('returns null when server disables proxy even if proxy is globally enabled', async () => {
-    (fs.pathExists as jest.Mock).mockImplementation(async (target: string) => target === '/app/servers/survival/docker-compose.yml');
+    (fs.pathExists as jest.Mock).mockImplementation(async (target: string) => matchCompose(target));
     (fs.readFile as unknown as jest.Mock).mockResolvedValue(
       yaml.dump({
         services: {
@@ -63,7 +66,7 @@ describe('ProxyService', () => {
   });
 
   it('returns null when object-style labels disable proxy with boolean false', async () => {
-    (fs.pathExists as jest.Mock).mockImplementation(async (target: string) => target === '/app/servers/survival/docker-compose.yml');
+    (fs.pathExists as jest.Mock).mockImplementation(async (target: string) => matchCompose(target));
     (fs.readFile as unknown as jest.Mock).mockResolvedValue(
       yaml.dump({
         services: {
@@ -82,7 +85,7 @@ describe('ProxyService', () => {
   });
 
   it('uses custom server hostname when no route mapping exists yet', async () => {
-    (fs.pathExists as jest.Mock).mockImplementation(async (target: string) => target === '/app/servers/survival/docker-compose.yml');
+    (fs.pathExists as jest.Mock).mockImplementation(async (target: string) => matchCompose(target));
     (fs.readFile as unknown as jest.Mock).mockResolvedValue(
       yaml.dump({
         services: {
@@ -99,7 +102,7 @@ describe('ProxyService', () => {
   });
 
   it('uses object-style hostname labels when no route mapping exists yet', async () => {
-    (fs.pathExists as jest.Mock).mockImplementation(async (target: string) => target === '/app/servers/survival/docker-compose.yml');
+    (fs.pathExists as jest.Mock).mockImplementation(async (target: string) => matchCompose(target));
     (fs.readFile as unknown as jest.Mock).mockResolvedValue(
       yaml.dump({
         services: {
@@ -122,7 +125,7 @@ describe('ProxyService', () => {
     const settingsRepo = (service as any).settingsRepo;
     settingsRepo.findOne.mockResolvedValue({ preferences: { proxyEnabled: true, proxyBaseDomain: 'user.test' } });
 
-    (fs.pathExists as jest.Mock).mockImplementation(async (target: string) => target === '/app/servers/survival/docker-compose.yml');
+    (fs.pathExists as jest.Mock).mockImplementation(async (target: string) => matchCompose(target));
     (fs.readFile as unknown as jest.Mock).mockResolvedValue(
       yaml.dump({
         services: {

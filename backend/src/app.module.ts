@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { ServerManagementModule } from './server-management/server-management.module';
@@ -26,6 +28,13 @@ import { JwtAuthGuard } from './auth/guards/auth.guard';
     ConfigModule.forRoot({
       load: [config],
       isGlobal: true,
+      // process.cwd() during dev with `npm run start:dev --prefix backend` is backend/,
+      // so the default `.env` lookup misses the repo-root file. In Docker, .env is not
+      // mounted; env vars are injected via compose `env_file:`. Load the root .env if
+      // it exists, otherwise skip the file and rely on the environment.
+      ...(existsSync(resolve(process.cwd(), '..', '.env'))
+        ? { envFilePath: resolve(process.cwd(), '..', '.env') }
+        : { ignoreEnvFile: true }),
     }),
     DatabaseModule,
     UsersModule,
