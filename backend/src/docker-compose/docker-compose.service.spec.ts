@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { DockerComposeService } from './docker-compose.service';
 import * as fs from 'fs-extra';
+import * as path from 'path';
 import * as yaml from 'js-yaml';
 
 jest.mock('node:child_process', () => ({
@@ -407,7 +408,6 @@ describe('DockerComposeService', () => {
   });
 
   describe('parseVolumes (volume host-path normalization)', () => {
-    const path = require('path') as typeof import('path');
     const invoke = (dockerVolumes: string, serverId = 'srv') =>
       (service as any).parseVolumes({ ...(service as any).createDefaultConfig(serverId), dockerVolumes });
 
