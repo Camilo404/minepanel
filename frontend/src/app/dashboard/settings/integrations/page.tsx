@@ -24,7 +24,7 @@ export default function IntegrationsSettingsPage() {
     Promise.all([getSettings(), getCurrentUser()])
       .then(([settings, user]) => {
         setCanManageSystemSettings(user.role === 'ADMIN' || user.access.permissions.accessAllServers);
-        form.reset(settings);
+        form.reset({ cfApiKey: settings.cfApiKey ?? '', discordWebhook: settings.discordWebhook ?? '' });
       })
       .catch((error) => {
         console.error('Error loading settings:', error);

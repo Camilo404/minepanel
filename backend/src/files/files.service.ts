@@ -33,6 +33,7 @@ export class FilesService {
     // ".world" means global world library directory
     if (serverId === '.world') {
       const canonical = path.join(this.SERVERS_DIR, '.world', 'worlds');
+      fs.ensureDirSync(canonical);
       if (this.isExistingNonEmptyDir(canonical)) return canonical;
 
       const alternate = path.join(this.SERVERS_DIR, 'servers', '.world', 'worlds');

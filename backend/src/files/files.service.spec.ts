@@ -130,6 +130,16 @@ describe('FilesService', () => {
       expect(names).not.toContain('from-nested.dat');
     });
 
+    it('recreates the canonical .world/worlds folder when missing', async () => {
+      const canonical = path.join(serversDir, '.world', 'worlds');
+      await fs.remove(canonical);
+
+      const items = await service.listFiles('.world');
+
+      expect(items).toEqual([]);
+      expect(await fs.pathExists(canonical)).toBe(true);
+    });
+
     it('skips named volumes and only follows host-path mounts', async () => {
       const serverId = 'named';
       const canonical = path.join(serversDir, serverId, 'mc-data');
