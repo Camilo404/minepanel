@@ -2,7 +2,7 @@ import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/auth.guard';
 import { ModrinthService } from './modrinth.service';
 import { SearchModrinthModsQueryDto } from './dto/search-mods.query.dto';
-import { SearchModrinthModpacksQueryDto } from './dto/search-modpacks.query.dto';
+import { ProjectVersionsQueryDto } from './dto/project-versions.query.dto';
 
 @Controller('modrinth')
 @UseGuards(JwtAuthGuard)
@@ -20,18 +20,34 @@ export class ModrinthController {
     });
   }
 
-  @Get('modpacks/search')
-  async searchModpacks(@Query() query: SearchModrinthModpacksQueryDto) {
-    return this.modrinthService.searchModpacks({
-      q: query.q,
-      limit: query.limit,
-      offset: query.offset,
-      index: query.index,
-    });
+  @Get('projects/resolve')
+  async resolveProjects(@Query('refs') refs?: string) {
+    const parsed = (refs ?? '').split(',');
+    return { data: await this.modrinthService.resolveProjects(parsed) };
   }
 
-  @Get('modpacks/:idOrSlug')
-  async getModpack(@Param('idOrSlug') idOrSlug: string) {
-    return this.modrinthService.getModpack(idOrSlug);
+  @Get('projects/latest')
+  async getLatestProjectVersions(@Query() query: ProjectVersionsQueryDto, @Query('refs') refs?: string) {
+    return {
+      data: await this.modrinthService.getLatestVersions((refs ?? '').split(','), {
+        minecraftVersion: query.minecraftVersion,
+        loader: query.loader,
+      }),
+    };
+  }
+
+  @Get('versions/resolve')
+  async resolveVersions(@Query('ids') ids?: string) {
+    return { data: await this.modrinthService.resolveVersions((ids ?? '').split(',')) };
+  }
+
+  @Get('projects/:ref/versions')
+  async getProjectVersions(@Param('ref') ref: string, @Query() query: ProjectVersionsQueryDto) {
+    return {
+      data: await this.modrinthService.getProjectVersions(ref, {
+        minecraftVersion: query.minecraftVersion,
+        loader: query.loader,
+      }),
+    };
   }
 }

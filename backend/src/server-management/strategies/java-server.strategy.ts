@@ -47,6 +47,7 @@ export class JavaServerStrategy implements IServerStrategy {
       'NEOFORGE',
       'AUTO_CURSEFORGE',
       'CURSEFORGE',
+      'FTBA',
       'MODRINTH',
       'GTNH',
       'SPIGOT',
@@ -208,6 +209,7 @@ export class JavaServerStrategy implements IServerStrategy {
       FABRIC: () => this.addFabricConfig(env, config),
       AUTO_CURSEFORGE: () => this.addAutoCurseForgeConfig(env, config),
       CURSEFORGE: () => this.addManualCurseForgeConfig(env, config),
+      FTBA: () => this.addFtbaConfig(env, config),
       MODRINTH: () => this.addModrinthConfig(env, config),
       GTNH: () => this.addGtnhConfig(env, config),
       SPIGOT: () => this.addPluginServerConfig(env, config),
@@ -236,6 +238,7 @@ export class JavaServerStrategy implements IServerStrategy {
       env['MODRINTH_PROJECTS_DEFAULT_VERSION_TYPE'] = config.modrinthDefaultVersionType;
     }
     if (config.modrinthLoader) env['MODRINTH_LOADER'] = config.modrinthLoader;
+    if (config.versionFromModrinthProjects) env['VERSION_FROM_MODRINTH_PROJECTS'] = 'true';
 
     // Only set MODPACK for pure MODRINTH server
     if (config.serverType === 'MODRINTH') {
@@ -247,6 +250,11 @@ export class JavaServerStrategy implements IServerStrategy {
     if (config.gtnhPackVersion) env['GTNH_PACK_VERSION'] = config.gtnhPackVersion;
     if (config.gtnhDeleteBackups) env['GTNH_DELETE_BACKUPS'] = 'true';
     if (config.skipGtnhUpdateCheck) env['SKIP_GTNH_UPDATE_CHECK'] = 'true';
+  }
+
+  private addFtbaConfig(env: Record<string, string>, config: ServerConfig): void {
+    if (config.ftbModpackId) env['FTB_MODPACK_ID'] = config.ftbModpackId;
+    if (config.ftbModpackVersionId) env['FTB_MODPACK_VERSION_ID'] = config.ftbModpackVersionId;
   }
 
   private resolveLevelType(config: ServerConfig): string {
@@ -274,9 +282,16 @@ export class JavaServerStrategy implements IServerStrategy {
       env['CF_SLUG'] = config.cfSlug;
       env['MODPACK_PLATFORM'] = 'AUTO_CURSEFORGE';
       if (config.cfFile) env['CF_FILE_ID'] = config.cfFile;
-    } else if (config.cfMethod === 'file' && config.cfFilenameMatcher) {
-      env['CF_FILENAME_MATCHER'] = config.cfFilenameMatcher;
+    } else if (config.cfMethod === 'file' && config.cfModpackZip) {
+      // An unpublished zip still needs a slug; the image only uses it to name the install.
+      env['CF_MODPACK_ZIP'] = config.cfModpackZip;
+      env['CF_SLUG'] = config.cfSlug || 'custom';
       env['MODPACK_PLATFORM'] = 'AUTO_CURSEFORGE';
+    }
+
+    // Narrows which published file to download; it never matches local files.
+    if (config.cfFilenameMatcher && config.cfMethod !== 'file') {
+      env['CF_FILENAME_MATCHER'] = config.cfFilenameMatcher;
     }
 
     if (config.cfSync) env['CF_FORCE_SYNCHRONIZE'] = 'true';

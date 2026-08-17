@@ -72,6 +72,8 @@ export default () => {
       pass: process.env.SMTP_PASS,
       from: process.env.SMTP_FROM,
     },
+    // Shared secret mc-router sends on auto-scale webhook calls. Unset = feature off.
+    autoScaleToken: process.env.MC_PROXY_AUTOSCALE_TOKEN || undefined,
     serversDir: containerPath('servers'),
     baseDir,
     backupBaseDir: process.env.BACKUP_BASE_DIR || undefined,

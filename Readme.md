@@ -18,7 +18,7 @@ Web panel to manage Minecraft servers with Docker — Create, configure, and mon
 ---
 
 <div align="center">
-  <img src="./doc/public/img/minepanel.png" alt="Minepanel Dashboard" width="90%">
+  <img src="./doc/public/img/minepanel.webp" alt="Minepanel Dashboard" width="90%">
 </div>
 <div align="center" style="margin-top: 8px;">
   <a href="https://buymeacoffee.com/pims2711y" target="_blank">
@@ -53,7 +53,7 @@ If you access Minepanel over plain HTTP by local IP and login gets stuck on "Ver
 - **All server types** — Vanilla, Paper, Forge, Fabric, Purpur, and more
 - **Modpacks** — CurseForge & Modrinth integration
 - **Automatic backups** — Scheduled backups with retention policies
-- **Proxy support** — mc-router for single-port multi-server (Java)
+- **Proxy support** — mc-router for single-port multi-server (Java), with optional auto-scaling (sleep when idle, wake on join)
 - **Discord webhooks** — Server events notifications
 - **Admin + user access control** — First phase with invitations and per-user permissions
 - **Multi-language** — English, Spanish, Dutch, German, Polish

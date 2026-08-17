@@ -1,4 +1,4 @@
-import { TranslationKey } from './en';
+import type { TranslationKey } from './en';
 
 export const es: Record<TranslationKey, string> = {
   // ===========================
@@ -155,6 +155,8 @@ export const es: Record<TranslationKey, string> = {
     'Instala automáticamente modpacks de Modrinth. Se puede configurar mediante URL, o Slug.',
   serverGtnh:
     'Despliega GT New Horizons con su modo dedicado del contenedor y valores recomendados para este modpack.',
+  serverFtba:
+    'Instala automáticamente un modpack de Feed The Beast (FTB) por su ID. El pack fija su propia versión de Minecraft y loader.',
   serverSpigot: 'Servidor optimizado compatible con plugins de Bukkit',
   serverPaper: 'Servidor de alto rendimiento basado en Spigot con optimizaciones adicionales',
   serverBukkit: 'Servidor clásico con soporte de plugins API estándar',
@@ -258,6 +260,8 @@ export const es: Record<TranslationKey, string> = {
   dangerEggWhisper1: 'Veo al jugador al que te refieres.',
   dangerEggWhisper2: 'Y el universo dijo te amo.',
   dangerEggWhisper3: 'Has jugado bien la partida.',
+  dangerEggMission: 'Mision',
+  dangerEggMissionObjective: 'Encuentra el portal al Overworld',
   settingsSaved: 'Configuración guardada exitosamente',
   settingsSaveFailed: 'Error al guardar la configuración',
   test: 'Probar',
@@ -279,6 +283,28 @@ export const es: Record<TranslationKey, string> = {
   settingsRestrictedDesc: 'No tienes permiso para editar esta sección de configuración.',
   integrationsSettingsTitle: 'Integraciones',
   integrationsSettingsDesc: 'Conecta servicios externos y credenciales usadas por el panel.',
+  integrationUnset: 'Sin configurar',
+  integrationSourceDb: 'Panel',
+  integrationSourceEnv: 'Entorno',
+  secretConfiguredPlaceholder: 'Configurado — déjalo en blanco para mantenerlo',
+  smtpSettingsTitle: 'Correo (SMTP)',
+  smtpSettingsDesc: 'Envía recuperación de contraseña e invitaciones. Se gestiona aquí o vía .env.',
+  smtpHost: 'Host SMTP',
+  smtpPort: 'Puerto',
+  smtpUser: 'Usuario',
+  smtpPassword: 'Contraseña',
+  smtpFrom: 'Remitente (From)',
+  smtpSecure: 'Usar TLS/SSL (puerto 465)',
+  smtpTest: 'Enviar correo de prueba',
+  oidcSettingsTitle: 'Inicio de sesión único (OIDC)',
+  oidcSettingsDesc: 'Inicia sesión con un proveedor de identidad externo. Se gestiona aquí o vía .env.',
+  oidcIssuer: 'URL del emisor (Issuer)',
+  oidcClientId: 'Client ID',
+  oidcClientSecret: 'Client secret',
+  oidcRedirectUri: 'Redirect URI',
+  oidcScopes: 'Scopes',
+  oidcProviderName: 'Nombre del proveedor',
+  oidcDisablePasswordLogin: 'Deshabilitar login con contraseña (solo SSO)',
   userInvitationsTitle: 'Invitaciones de Usuario',
   userInvitationsDesc: 'Crea un enlace de invitación para un nuevo usuario y opcionalmente envíalo por correo.',
   existingUsersTitle: 'Usuarios',
@@ -404,6 +430,8 @@ export const es: Record<TranslationKey, string> = {
   serverNotFound: 'Servidor no encontrado',
   connectionError: 'Error de conexión',
   unexpectedError: 'Error inesperado',
+  unexpectedErrorDesc: 'El panel no pudo mostrar esta página. Recargar suele solucionarlo.',
+  reloadPage: 'Recargar página',
   NO_ACCESS_TOKEN: 'No se recibió token de acceso',
   LOGIN_ERROR: 'Error al iniciar sesión',
   SERVER_START_ERROR: 'Error al iniciar el servidor',
@@ -1184,6 +1212,18 @@ export const es: Record<TranslationKey, string> = {
   skipGtnhUpdateCheckDesc:
     'Desactiva la verificación de actualizaciones después de la instalación inicial si quieres evitar updates automáticos de GTNH.',
 
+  // FTB (Feed The Beast)
+  ftbaRequirementsTitle: 'Modpack Feed The Beast',
+  ftbaRequirementsBody:
+    'Instala automáticamente un modpack de FTB por su ID numérico. El pack fija su propia versión de Minecraft y loader. Encuentra el ID del modpack en su página en feed-the-beast.com.',
+  ftbModpackId: 'ID del modpack FTB',
+  ftbModpackIdDesc:
+    'ID numérico del modpack en feed-the-beast.com (por ejemplo 119 para FTB Presents Direwolf20). Obligatorio.',
+  ftbModpackVersionId: 'ID de versión FTB (opcional)',
+  ftbModpackVersionIdDesc:
+    'ID numérico de una versión específica del pack. Déjalo vacío para instalar siempre la última versión.',
+  ftbModpackVersionIdPlaceholder: 'latest',
+
   // CurseForge Manual (Obsoleto)
   deprecatedFeature: 'Función obsoleta (Deprecated)',
   manualCurseForgeDeprecated:
@@ -1215,7 +1255,7 @@ export const es: Record<TranslationKey, string> = {
   methodSlug: 'Slug',
   methodSlugDesc: 'Identificador único del modpack (ej: "all-the-mods-7")',
   methodFile: 'Archivo',
-  methodFileDesc: 'Instalar desde un archivo .zip ya subido al servidor',
+  methodFileDesc: 'Instalar desde un archivo de modpack subido a este servidor',
   installFromUrl: 'Instalar desde URL directa',
   useIdSlug: 'Usar ID/slug del modpack',
   useLocalFile: 'Usar archivo local en el servidor',
@@ -1234,10 +1274,19 @@ export const es: Record<TranslationKey, string> = {
   fileIdDesc:
     'ID específico del archivo a descargar. Si se deja en blanco, se usará la última versión.',
 
-  filePattern: 'Patrón de Archivo (CF_FILENAME_MATCHER)',
-  filePatternHelp:
-    'Especifica un substring para encontrar el archivo deseado en la carpeta /modpacks.',
-  filePatternDesc: 'Patrón para encontrar el archivo del modpack en la carpeta /modpacks',
+  filePattern: 'Filtro de nombre de archivo (CF_FILENAME_MATCHER)',
+  filePatternHelp: 'Opcional. Subcadena o /regex/ para acotar qué archivo publicado se descarga.',
+  filePatternDesc: 'Déjalo vacío para usar siempre el último archivo compatible',
+  modpackFiles: 'Archivos de modpack',
+  modpackUpload: 'Subir modpack',
+  modpackEmpty: 'Todavía no hay archivos de modpack subidos',
+  modpackUploaded: 'Modpack subido',
+  modpackDeleted: 'Modpack eliminado',
+  modpackUploadError: 'No se pudo subir el modpack',
+  modpackDeleteError: 'No se pudo eliminar el modpack',
+  modpackWrongFormat: 'Se esperaba un archivo:',
+  modpackLoadError: 'No se pudieron cargar los archivos de modpack',
+  modpackHint: 'Los archivos se guardan en la carpeta modpacks/ del servidor y se montan en /modpacks en solo lectura',
 
   cfApiKey: 'API Key de CurseForge (CF_API_KEY)',
   cfApiKeyHelp: 'API Key de CurseForge (Eternal) requerida para descargar algunos modpacks.',
@@ -1311,6 +1360,23 @@ export const es: Record<TranslationKey, string> = {
   compatibilityFiltered: 'Mostrando solo mods compatibles con la configuración actual del servidor',
   loaderNotDetected: 'No se detectó loader. Se filtra compatibilidad solo por versión de Minecraft.',
   errorSearchingMods: 'Error al buscar mods',
+  modsListVisual: 'Visual',
+  modsListManual: 'Manual',
+  modsListEmpty: 'Todavía no hay mods',
+  modsListEmptyHint: 'Usa "Buscar mods" para agregarlos con su versión fijada.',
+  modsCount: 'mods',
+  modVersionLatest: 'Última disponible',
+  modVersionsEmpty: 'Sin versiones para esta versión/loader',
+  modUpdateAvailable: 'Actualización disponible',
+  modOptional: 'Opcional',
+  modOptionalHelp: 'itzg sigue arrancando el servidor si no hay versión compatible, y deja este mod fuera del cálculo de versión',
+  versionFromModrinthProjects: 'Versión según los mods',
+  versionFromModrinthProjectsDesc: 'Usar la versión de Minecraft más nueva que soportan todos los mods no opcionales de la lista',
+  modpackNotSelected: 'Ningún modpack seleccionado',
+  removeModpack: 'Quitar modpack',
+  modpackVersion: 'Versión',
+  errorLoadingVersions: 'Error al cargar las versiones del mod',
+  cfApiKeyFromSettings: 'La API key de CurseForge se toma de tus ajustes globales.',
   loadingModpacks: 'Cargando modpacks...',
   errorLoadingModpacks: 'Error al cargar modpacks',
   errorSearchingModpacks: 'Error al buscar modpacks',
@@ -1365,6 +1431,11 @@ export const es: Record<TranslationKey, string> = {
   curseforgeApiKeyNotConfigured:
     'La clave API de CurseForge no está configurada. Por favor agrégala en Configuración para usar esta función.',
   goToSettings: 'Ir a Configuración',
+  cfApiKeyHowTo: 'Cómo obtenerla',
+  cfApiKeyStep1: 'Inicia sesión en console.curseforge.com con tu cuenta de CurseForge.',
+  cfApiKeyStep2: 'Abre la sección API Keys y copia la clave que aparece ahí.',
+  cfApiKeyStep3: 'Pégala en Configuración > Integraciones > Clave API de CurseForge y guarda.',
+  getCurseforgeApiKey: 'Obtener una clave API',
   createServerFromModpack: 'Crear un nuevo servidor usando este modpack',
   serverIdRequired: 'El ID del servidor es requerido',
   optional: 'opcional',
@@ -1718,4 +1789,6 @@ export const es: Record<TranslationKey, string> = {
   tabGroupOperation: 'Operación',
   tabGroupMonitoring: 'Monitoreo',
   back: 'Volver',
+  pageNotFoundTitle: 'Página no encontrada',
+  pageNotFoundDesc: 'Esta página no existe o fue movida.',
 };

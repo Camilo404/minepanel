@@ -118,7 +118,7 @@ export function ServerQuickView({ servers, resources, isLoading = false }: Serve
   const getUsageColor = (percent: number) => {
     if (percent >= 90) return "#f05a5a";
     if (percent >= 70) return "#f5c542";
-    return "#34d399";
+    return "#9dff3f";
   };
 
   const hasHighUsage = (server: ServerWithResources) => server.status === "running" && (server.cpuPercent >= 80 || server.memoryPercent >= 80);

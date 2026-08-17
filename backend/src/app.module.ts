@@ -8,6 +8,7 @@ import { ServerManagementModule } from './server-management/server-management.mo
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { ConfigModule } from '@nestjs/config';
+import { ThrottlerModule, seconds } from '@nestjs/throttler';
 import config from 'src/config';
 import { DatabaseModule } from './database/database.module';
 import { SystemMonitoringModule } from './system-monitoring/system-monitoring.module';
@@ -18,6 +19,7 @@ import { ProxyModule } from './proxy/proxy.module';
 import { ModrinthModule } from './modrinth/modrinth.module';
 import { WorldDiscoveryModule } from './world-discovery/world-discovery.module';
 import { BedrockAddonsModule } from './bedrock-addons/bedrock-addons.module';
+import { ModpacksModule } from './modpacks/modpacks.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { ScheduledTasksModule } from './scheduled-tasks/scheduled-tasks.module';
 import { AlertsModule } from './alerts/alerts.module';
@@ -36,6 +38,7 @@ import { JwtAuthGuard } from './auth/guards/auth.guard';
         ? { envFilePath: resolve(process.cwd(), '..', '.env') }
         : { ignoreEnvFile: true }),
     }),
+    ThrottlerModule.forRoot([{ ttl: seconds(60), limit: 10 }]),
     DatabaseModule,
     UsersModule,
     ServerManagementModule,
@@ -46,6 +49,7 @@ import { JwtAuthGuard } from './auth/guards/auth.guard';
     ModrinthModule,
     WorldDiscoveryModule,
     BedrockAddonsModule,
+    ModpacksModule,
     MetricsModule,
     ScheduledTasksModule,
     AlertsModule,

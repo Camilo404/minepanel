@@ -47,7 +47,7 @@ export const ServerConfigTabs: FC<ServerConfigTabsProps> = ({ serverId, config, 
   const isBedrock = config.edition === "BEDROCK";
 
   // Java-only tabs
-  const showModsTab = isJava && (config.serverType === "FORGE" || config.serverType === "NEOFORGE" || config.serverType === "FABRIC" || config.serverType === "AUTO_CURSEFORGE" || config.serverType === "CURSEFORGE" || config.serverType === 'MODRINTH' || config.serverType === 'GTNH');
+  const showModsTab = isJava && (config.serverType === "FORGE" || config.serverType === "NEOFORGE" || config.serverType === "FABRIC" || config.serverType === "AUTO_CURSEFORGE" || config.serverType === "CURSEFORGE" || config.serverType === 'MODRINTH' || config.serverType === 'GTNH' || config.serverType === 'FTBA');
   const showPluginsTab = isJava && (config.serverType === "SPIGOT" || config.serverType === "PAPER" || config.serverType === "BUKKIT" || config.serverType === "PUFFERFISH" || config.serverType === "PURPUR" || config.serverType === "LEAF" || config.serverType === "FOLIA");
   const showResourcesTab = isJava; // JVM settings only apply to Java
   const showCommandsTab = isJava; // RCON only works with Java
@@ -105,13 +105,11 @@ export const ServerConfigTabs: FC<ServerConfigTabsProps> = ({ serverId, config, 
 
   const paletteItems: TabSearchItem[] = [...tabItems, ...settingItems];
 
-  const getInitialTab = () => {
-    if (typeof window === "undefined") return "type";
-    const hash = window.location.hash.slice(1);
-    return ALL_TAB_VALUES.includes(hash) ? hash : "type";
-  };
-
-  const [activeTab, setActiveTab] = useState(getInitialTab());
+  // The tab from the URL hash is applied after mount, not during render: the
+  // server always renders "type", so reading window here would hydrate a
+  // different subtree and crash React.
+  const [activeTab, setActiveTab] = useState("type");
+  const [hashApplied, setHashApplied] = useState(false);
   const [savedConfig, setSavedConfig] = useState<ServerConfig | null>(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
 
@@ -133,10 +131,17 @@ export const ServerConfigTabs: FC<ServerConfigTabsProps> = ({ serverId, config, 
   }, [config, savedConfig]);
 
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      window.location.hash = activeTab;
+    const hash = window.location.hash.slice(1);
+    if (ALL_TAB_VALUES.includes(hash)) {
+      setActiveTab(hash);
     }
-  }, [activeTab]);
+    setHashApplied(true);
+  }, []);
+
+  useEffect(() => {
+    if (!hashApplied) return;
+    window.location.hash = activeTab;
+  }, [activeTab, hashApplied]);
 
   useEffect(() => {
     const handleHashChange = () => {
@@ -223,7 +228,7 @@ export const ServerConfigTabs: FC<ServerConfigTabsProps> = ({ serverId, config, 
 
               {showModsTab && (
                 <TabsContent value="mods" className="space-y-4 mt-0">
-                  <ModsTab config={config} updateConfig={updateConfig} />
+                  <ModsTab serverId={serverId} config={config} updateConfig={updateConfig} />
                 </TabsContent>
               )}
 

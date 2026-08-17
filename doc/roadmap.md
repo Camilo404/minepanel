@@ -49,7 +49,7 @@ Already available in the current stable line.
 
 ### ✅ Multi-language
 
-- 6 languages: English, Spanish, French, German, Dutch, Polish
+- 8 languages: English, Spanish, French, German, Dutch, Polish, Russian, Portuguese
 
 ### ✅ Mods & plugins
 
@@ -94,7 +94,7 @@ Already available in the current stable line.
 
 - Quick-create wizard
 - Built-in templates (Survival, Creative, SkyBlock, PvP, Bedrock presets, Paper cross-play)
-- Server types: Vanilla, Paper, Forge, NeoForge, Fabric, Purpur, GTNH, CurseForge & Modrinth modpacks
+- Server types: Vanilla, Paper, Forge, NeoForge, Fabric, Purpur, GTNH, CurseForge, Modrinth & Feed The Beast (FTB) modpacks
 
 ### ✅ Player management
 

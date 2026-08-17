@@ -12,13 +12,13 @@ import { takeUntil } from 'rxjs/operators';
 import { Settings } from 'src/users/entities/settings.entity';
 import { DiscordService, ServerEventType, SupportedLanguage } from 'src/discord/discord.service';
 import { ConfigService } from '@nestjs/config';
-import { ServerEdition } from './dto/server-config.model';
+import { ServerEdition, SHUTDOWN_BUFFER_SECONDS } from './dto/server-config.model';
 import { AlertsService } from 'src/alerts/alerts.service';
 
 const execAsync = promisify(exec);
 
 const DOCKER_COMMANDS = {
-  COMPOSE_DOWN: 'docker compose down',
+COMPOSE_DOWN: (timeout: number) => `docker compose down --timeout ${timeout}`,
   COMPOSE_DOWN_RM: 'docker compose down --remove-orphans',
   COMPOSE_UP: 'docker compose up -d',
   COMPOSE_PS: 'docker compose ps -aq',
@@ -32,14 +32,9 @@ const DOCKER_COMMANDS = {
   // Single command to get every container's state (used for status across all servers)
   PS_ALL: String.raw`docker ps -a --no-trunc --format "{{.ID}}\t{{.Names}}\t{{.State}}"`,
   LOGS: (containerId: string, lines: number) => `docker logs --tail ${lines} --timestamps ${containerId} 2>&1`,
-  LOGS_SINCE: (containerId: string, since: string) => `docker logs --since ${since} --timestamps ${containerId} 2>&1`,
   // Bedrock: TODO - commands disabled due to TTY/permission issues with send-command
   EXEC_BEDROCK: (_containerId: string, _command: string) => {
     return `echo "Commands not supported for Bedrock servers yet"`;
-  },
-  // Fix permissions for Bedrock (needs UID/GID 1000)
-  FIX_PERMISSIONS: (hostPath: string, uid = '1000', gid = '1000') => {
-    return `docker run --rm -v "${hostPath}:/data" alpine chown -R ${uid}:${gid} /data`;
   },
   RESTIC_SNAPSHOTS: (serverId: string) => `docker exec ${serverId}-backup restic snapshots --json`,
   VOLUME_LIST: (serverId: string) => `docker volume ls --filter "name=${serverId}" --format "{{.Name}}"`,
@@ -487,6 +482,44 @@ export class ServerManagementService implements OnModuleDestroy {
     return execAsync(command, this.getComposeExecOptions(serverId));
   }
 
+  private parseComposeSeconds(value: unknown): number | undefined {
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+      return value;
+    }
+    if (typeof value !== 'string') {
+      return undefined;
+    }
+    const match = /^(\d+)s?$/.exec(value.trim());
+    const seconds = match ? Number.parseInt(match[1], 10) : Number.NaN;
+    return Number.isFinite(seconds) && seconds > 0 ? seconds : undefined;
+  }
+
+  // Compose defaults to 10s, which SIGKILLs Minecraft mid-announcement and loses the final save
+  private async getStopTimeout(serverId: string): Promise<number> {
+    try {
+      const content = await fs.readFile(this.getDockerComposePath(serverId), 'utf-8');
+      const mc = (yaml.load(content) as any)?.services?.mc;
+
+      const grace = this.parseComposeSeconds(mc?.stop_grace_period);
+      if (grace !== undefined) {
+        return grace;
+      }
+
+      const announceDelay = this.parseComposeSeconds(mc?.environment?.STOP_SERVER_ANNOUNCE_DELAY);
+      if (announceDelay !== undefined) {
+        return announceDelay + SHUTDOWN_BUFFER_SECONDS;
+      }
+    } catch (error) {
+      this.logger.warn(`Could not read stop timeout for ${serverId}, using default`, error);
+    }
+
+    return SHUTDOWN_BUFFER_SECONDS;
+  }
+
+  private async execComposeDown(serverId: string) {
+    return this.execComposeCommand(serverId, DOCKER_COMMANDS.COMPOSE_DOWN(await this.getStopTimeout(serverId)));
+  }
+
   private executeProcess(
     command: string,
     args: string[],
@@ -877,7 +910,7 @@ export class ServerManagementService implements OnModuleDestroy {
       }
 
       this.alertsService.markExpectedStop(serverId);
-      await this.execComposeCommand(serverId, DOCKER_COMMANDS.COMPOSE_DOWN);
+      await this.execComposeDown(serverId);
       await this.execComposeCommand(serverId, DOCKER_COMMANDS.COMPOSE_UP);
 
       this.logger.log(`Server ${serverId} restarted successfully`);
@@ -903,7 +936,7 @@ export class ServerManagementService implements OnModuleDestroy {
 
       if (await fs.pathExists(dockerComposePath)) {
         this.alertsService.markExpectedStop(serverId);
-        await this.execComposeCommand(serverId, DOCKER_COMMANDS.COMPOSE_DOWN);
+        await this.execComposeDown(serverId);
       }
 
       if (await fs.pathExists(serverDataDir)) {
@@ -1057,7 +1090,7 @@ export class ServerManagementService implements OnModuleDestroy {
       if (await fs.pathExists(dockerComposePath)) {
         try {
           this.alertsService.markExpectedStop(serverId);
-          await this.execComposeCommand(serverId, DOCKER_COMMANDS.COMPOSE_DOWN);
+          await this.execComposeDown(serverId);
         } catch (error) {
           this.logger.warn(`Could not stop server ${serverId} before deletion`, error);
         }
@@ -1515,14 +1548,14 @@ export class ServerManagementService implements OnModuleDestroy {
         };
       }
 
-      let dockerCommand: string;
+      let logs: string;
       if (since) {
-        dockerCommand = `docker logs --since ${since} --timestamps ${containerId} 2>&1`;
+        const { stdout, stderr } = await this.executeProcess('docker', ['logs', '--since', since, '--timestamps', containerId]);
+        logs = stdout + stderr;
       } else {
-        dockerCommand = `docker logs --tail ${lines} --timestamps ${containerId} 2>&1`;
+        const result = await execAsync(`docker logs --tail ${lines} --timestamps ${containerId} 2>&1`);
+        logs = result.stdout;
       }
-
-      const { stdout: logs } = await execAsync(dockerCommand);
       const logAnalysis = this.analyzeLogs(logs);
 
       let lastTimestamp: string | undefined;
@@ -1606,7 +1639,8 @@ export class ServerManagementService implements OnModuleDestroy {
         };
       }
 
-      const { stdout: logs } = await execAsync(DOCKER_COMMANDS.LOGS_SINCE(containerId, timestamp));
+      const { stdout, stderr } = await this.executeProcess('docker', ['logs', '--since', timestamp, '--timestamps', containerId]);
+      const logs = stdout + stderr;
       const hasNewContent = logs.trim().length > 0;
       const logAnalysis = this.analyzeLogs(logs);
 
@@ -1765,7 +1799,7 @@ export class ServerManagementService implements OnModuleDestroy {
         await this.fixBedrockPermissions(serverId);
       }
 
-      // ponytail: always clean up before up. Previous status gate lied when
+// ponytail: always clean up before up. Previous status gate lied when
       // findContainerId missed a compose-suffixed name, leaving orphans that
       // the next `up -d` would conflict with. --remove-orphans kills strays
       // from prior compose runs so the fresh container can claim its name.
@@ -1809,8 +1843,12 @@ export class ServerManagementService implements OnModuleDestroy {
         // Use defaults
       }
 
-      this.logger.log(`Fixing permissions for Bedrock server ${serverId} (${uid}:${gid})...`);
-      await execAsync(DOCKER_COMMANDS.FIX_PERMISSIONS(hostMcDataPath, uid, gid));
+      // Coerce to numeric ids so they can never carry shell metacharacters, even from a tampered compose file
+      const safeUid = /^\d+$/.test(uid) ? uid : '1000';
+      const safeGid = /^\d+$/.test(gid) ? gid : '1000';
+
+      this.logger.log(`Fixing permissions for Bedrock server ${serverId} (${safeUid}:${safeGid})...`);
+      await this.executeProcess('docker', ['run', '--rm', '-v', `${hostMcDataPath}:/data`, 'alpine', 'chown', '-R', `${safeUid}:${safeGid}`, '/data']);
       this.logger.log(`Permissions fixed for ${serverId}`);
     } catch (error) {
       this.logger.warn(`Could not fix permissions for ${serverId}: ${(error as Error).message}`);
@@ -1832,7 +1870,7 @@ export class ServerManagementService implements OnModuleDestroy {
       }
 
       this.alertsService.markExpectedStop(serverId);
-      await this.execComposeCommand(serverId, DOCKER_COMMANDS.COMPOSE_DOWN);
+      await this.execComposeDown(serverId);
 
       this.logger.log(`Server ${serverId} stopped successfully`);
       await this.sendDiscordNotification('stopped', serverId);

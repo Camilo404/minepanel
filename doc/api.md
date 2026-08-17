@@ -47,6 +47,7 @@ These routes do not require an authenticated session:
 | `POST` | `/auth/logout` | Clear session cookies and revoke refresh token when present |
 | `GET` | `/auth/oidc/login` | Begin SSO login, redirects to the OIDC provider (when SSO is configured) |
 | `GET` | `/auth/oidc/callback` | OIDC provider callback; sets session cookies and redirects to the dashboard |
+| `POST` | `/servers/autoscale` | mc-router auto-scaling webhook; disabled unless `MC_PROXY_AUTOSCALE_TOKEN` is set |
 
 All other endpoints require JWT authentication. See [Single Sign-On](/sso) for SSO setup.
 
@@ -120,6 +121,15 @@ Typical examples:
 - `POST /servers/:id/clear-data`
 - `DELETE /servers/:id`
 - `POST /servers/regenerate-all` — admin only; regenerates every server's `docker-compose.yml`.
+
+Modpack files uploaded for a server (`.zip` for CurseForge, `.mrpack` for Modrinth). They are stored
+in `servers/<id>/modpacks/` and mounted read-only at `/modpacks`:
+
+- `GET /servers/:id/modpacks`
+- `POST /servers/:id/modpacks` — multipart `file`
+- `DELETE /servers/:id/modpacks/:fileName`
+
+Uploads are capped at 256 MB and rejected unless the file ends in `.zip` or `.mrpack`.
 
 ### Files
 
@@ -205,7 +215,20 @@ Host monitoring endpoints:
 
 - `GET /curseforge/search`
 - `GET /curseforge/featured`
+- `GET /curseforge/mods/search`
+- `GET /curseforge/mods/resolve` — `refs` is a comma-separated list of slugs/IDs; returns their metadata (name, icon, downloads)
+- `GET /curseforge/mods/:ref/versions` — files for a mod, filtered by `minecraftVersion` and `loader`
+- `GET /curseforge/mods/files/resolve` — `ids` is a comma-separated list of file IDs; returns their names
+- `GET /curseforge/mods/latest` — newest compatible version per `refs`, used to flag outdated pins
 - `GET /modrinth/mods/search`
+- `GET /modrinth/projects/resolve` — same `refs` contract as CurseForge
+- `GET /modrinth/projects/:ref/versions`
+- `GET /modrinth/versions/resolve` — same `ids` contract as CurseForge
+- `GET /modrinth/projects/latest` — same `refs` contract as CurseForge
+
+Search and version endpoints treat `minecraftVersion=latest` (or empty) as "no version
+filter" instead of returning zero results. CurseForge endpoints use the global API key
+from user settings; Modrinth needs no credentials.
 
 ### World Discovery
 
@@ -237,6 +260,16 @@ mc-router proxy status and mapping management:
 - `GET /proxy/server/:id/hostname`
 - `POST /proxy/server/:id`
 - `DELETE /proxy/server/:id`
+
+Auto-scaling webhook, called by mc-router (see [Networking](/networking#auto-scaling-sleep-when-idle)):
+
+- `POST /servers/autoscale`
+
+```json
+{ "action": "up", "serverAddress": "survival.mc.example.com", "backend": "survival:25565" }
+```
+
+Requires `Authorization: Bearer <MC_PROXY_AUTOSCALE_TOKEN>`. `action: "up"` starts the server and only answers `200` once it accepts connections; `action: "down"` stops it. Servers that are not in the proxy routes are rejected with `404`.
 
 ## Response Patterns
 

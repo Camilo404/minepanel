@@ -20,6 +20,18 @@ npm run docs:preview  # Preview build
 
 ---
 
+## Theme & Design
+
+Neo-brutalist terminal aesthetic, dark-only (`appearance: 'force-dark'` in `.vitepress/config.mts`).
+
+- Design tokens (`--mp-*`) live in `.vitepress/theme/style.css`: bg `#0a0e08`, acid green `#9dff3f`, hard 2px borders, offset shadows, no border-radius.
+- Fonts: Archivo Black (display), Archivo (body), JetBrains Mono (mono/labels). Loaded via Google Fonts in `config.mts`.
+- Home page (`index.md`, `layout: page`) renders `<HomeLanding />` from `.vitepress/theme/components/home/` (hero, quick start, features, powered by, docs map, CTA).
+- Landing animations use GSAP + ScrollTrigger, loaded client-only via `.vitepress/theme/lib/gsap.js`. Always respect `prefers-reduced-motion` (gsap.matchMedia).
+- Reusable doc components: `TerminalCommand`, `TerminalSequence`, `TerminalInstall`, `EnvPresetTabs`, `NetworkPulseFlow` — styled with `--mp-*` tokens; keep new components on the same tokens.
+
+---
+
 ## Adding New Page
 
 1. Create `{page-name}.md` in `doc/`
@@ -108,10 +120,17 @@ services:
 
 ### Screenshots
 
-- Format: WebP for screenshots. Keep PNG only for assets that do not have a WebP replacement, such as `minepanel.png` and `server-types.png`.
+- Format: WebP for screenshots. Keep PNG only for assets that do not have a WebP replacement, such as `minepanel.webp` and `modes.webp`.
 - Location: `public/img/`
 - Naming: `{feature}-{description}.webp` (e.g., `server-creation.webp`)
 - Keep file size reasonable (<500KB)
+
+### Brand assets
+
+- `public/cubo.svg` - transparent logo, used by `themeConfig.logo` (nav).
+- `public/cubo.webp` - 512x512 opaque logo on `--mp-bg` (`#0a0e08`), used by `og:image`, `twitter:image`, `apple-touch-icon` and the maskable manifest icon. Keep it opaque; transparent icons break maskable/iOS rendering.
+- `public/favicon.ico` - multi-size (16-256) transparent icon.
+- Source artwork lives in `public/img/mipanel.ai`; regenerate the assets above from it, do not edit them by hand.
 
 ---
 

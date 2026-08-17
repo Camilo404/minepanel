@@ -1,4 +1,4 @@
-import { TranslationKey } from '@/lib/translations/en';
+import type { TranslationKey } from './en';
 
 export const nl: Record<TranslationKey, string> = {
   // ===========================
@@ -155,6 +155,8 @@ export const nl: Record<TranslationKey, string> = {
     'Installeert automatisch modpacks van Modrinth. Kan geconfigureerd worden met de URL of slug van het modpack.',
   serverGtnh:
     'Deploys GT New Horizons with its dedicated container mode and recommended defaults for this modpack.',
+  serverFtba:
+    'Automatically installs a Feed The Beast (FTB) modpack by its ID. The pack pins its own Minecraft and loader version.',
   serverSpigot: 'Geoptimaliseerde server compatibel met Bukkit plugins',
   serverPaper: 'Geoptimaliseerde server gebaseerd op Spigot met extra optimalisaties',
   serverBukkit: 'Klassieke server met plugin API ondersteuning',
@@ -260,6 +262,8 @@ export const nl: Record<TranslationKey, string> = {
   dangerEggWhisper1: 'Ik zie de speler die je bedoelt.',
   dangerEggWhisper2: 'En het universum zei: ik hou van je.',
   dangerEggWhisper3: 'Je hebt het spel goed gespeeld.',
+  dangerEggMission: 'Missie',
+  dangerEggMissionObjective: 'Vind het portaal naar de Overworld',
   settingsSaved: 'Instellingen succesvol opgeslagen',
   settingsSaveFailed: 'Instellingen opslaan mislukt',
   test: 'Test',
@@ -281,6 +285,28 @@ export const nl: Record<TranslationKey, string> = {
   settingsRestrictedDesc: 'Je hebt geen toestemming om dit configuratiegedeelte te bewerken.',
   integrationsSettingsTitle: 'Integraties',
   integrationsSettingsDesc: 'Verbind externe diensten en inloggegevens die door het paneel worden gebruikt.',
+  integrationUnset: 'Not set',
+  integrationSourceDb: 'Panel',
+  integrationSourceEnv: 'Environment',
+  secretConfiguredPlaceholder: 'Configured — leave blank to keep',
+  smtpSettingsTitle: 'Email (SMTP)',
+  smtpSettingsDesc: 'Send password resets and invitations. Managed here or via .env.',
+  smtpHost: 'SMTP host',
+  smtpPort: 'Port',
+  smtpUser: 'User',
+  smtpPassword: 'Password',
+  smtpFrom: 'From address',
+  smtpSecure: 'Use TLS/SSL (port 465)',
+  smtpTest: 'Send test email',
+  oidcSettingsTitle: 'Single sign-on (OIDC)',
+  oidcSettingsDesc: 'Log in with an external identity provider. Managed here or via .env.',
+  oidcIssuer: 'Issuer URL',
+  oidcClientId: 'Client ID',
+  oidcClientSecret: 'Client secret',
+  oidcRedirectUri: 'Redirect URI',
+  oidcScopes: 'Scopes',
+  oidcProviderName: 'Provider name',
+  oidcDisablePasswordLogin: 'Disable password login (SSO only)',
   userInvitationsTitle: 'Gebruikersuitnodigingen',
   userInvitationsDesc: 'Maak een uitnodigingslink voor een nieuwe gebruiker en verstuur deze optioneel per e-mail.',
   existingUsersTitle: 'Gebruikers',
@@ -407,6 +433,8 @@ export const nl: Record<TranslationKey, string> = {
   serverNotFound: 'De server is niet gevonden',
   connectionError: 'Verbindingsfout',
   unexpectedError: 'Onverwachts probleem',
+  unexpectedErrorDesc: 'Het paneel kon deze pagina niet weergeven. Opnieuw laden lost dit meestal op.',
+  reloadPage: 'Pagina opnieuw laden',
   NO_ACCESS_TOKEN: 'Er is geen toegangstoken ontvangen',
   LOGIN_ERROR: 'Inlogfout',
   SERVER_START_ERROR: 'De server kon niet worden gestart vanwege een probleem.',
@@ -1201,6 +1229,18 @@ export const nl: Record<TranslationKey, string> = {
   skipGtnhUpdateCheckDesc:
     'Disable update checks after the first installation if you want to prevent automatic GTNH updates from running.',
 
+  // FTB (Feed The Beast)
+  ftbaRequirementsTitle: 'Feed The Beast modpack',
+  ftbaRequirementsBody:
+    'Automatically installs an FTB modpack by its numeric ID. The pack pins its own Minecraft and loader version. Find the modpack ID on the pack page at feed-the-beast.com.',
+  ftbModpackId: 'FTB Modpack ID',
+  ftbModpackIdDesc:
+    'Numeric ID of the modpack on feed-the-beast.com (for example 119 for FTB Presents Direwolf20). Required.',
+  ftbModpackVersionId: 'FTB Version ID (optional)',
+  ftbModpackVersionIdDesc:
+    'Numeric ID of a specific pack version. Leave empty to always install the latest version.',
+  ftbModpackVersionIdPlaceholder: 'latest',
+
   // Manual CurseForge (Deprecated)
   deprecatedFeature: 'Verouderde functie',
   manualCurseForgeDeprecated:
@@ -1232,7 +1272,7 @@ export const nl: Record<TranslationKey, string> = {
   methodSlug: 'Slug',
   methodSlugDesc: 'Unieke modpack identifier (bijv: "all-the-mods-7")',
   methodFile: 'Bestand',
-  methodFileDesc: 'Installeer vanaf een .zip bestand dat al naar de server is geüpload',
+  methodFileDesc: 'Installeer vanaf een modpack-bestand dat naar deze server is geüpload',
   installFromUrl: 'Installeer vanaf directe URL',
   useIdSlug: 'Gebruik modpack ID/slug',
   useLocalFile: 'Gebruik lokaal bestand op server',
@@ -1251,9 +1291,19 @@ export const nl: Record<TranslationKey, string> = {
   fileIdDesc:
     'Specifiek bestand ID om te downloaden. Indien leeg gelaten, wordt de laatste versie gebruikt.',
 
-  filePattern: 'Bestand patroon (CF_FILENAME_MATCHER)',
-  filePatternHelp: 'Geef een substring op om het gewenste bestand te vinden in de /modpacks map.',
-  filePatternDesc: 'Patroon om het modpack bestand te vinden in de /modpacks map',
+  filePattern: 'Bestandsnaamfilter (CF_FILENAME_MATCHER)',
+  filePatternHelp: 'Optioneel. Substring of /regex/ die bepaalt welk gepubliceerd bestand wordt gedownload.',
+  filePatternDesc: 'Laat leeg om altijd het nieuwste compatibele bestand te gebruiken',
+  modpackFiles: 'Modpack-bestanden',
+  modpackUpload: 'Modpack uploaden',
+  modpackEmpty: 'Nog geen modpack-bestanden geüpload',
+  modpackUploaded: 'Modpack geüpload',
+  modpackDeleted: 'Modpack verwijderd',
+  modpackUploadError: 'Kon de modpack niet uploaden',
+  modpackDeleteError: 'Kon de modpack niet verwijderen',
+  modpackWrongFormat: 'Verwacht bestandstype:',
+  modpackLoadError: 'Kon de modpack-bestanden niet laden',
+  modpackHint: 'Bestanden staan in de map modpacks/ van de server en zijn alleen-lezen gekoppeld op /modpacks',
 
   cfApiKey: 'CurseForge API key (CF_API_KEY)',
   cfApiKeyHelp: 'CurseForge API key (Eternal) vereist om sommige modpacks te downloaden.',
@@ -1325,6 +1375,23 @@ export const nl: Record<TranslationKey, string> = {
   compatibilityFiltered: 'Alleen compatibele mods voor je huidige serverconfiguratie',
   loaderNotDetected: 'Loader niet gedetecteerd. Compatibiliteit wordt alleen op Minecraft-versie gefilterd.',
   errorSearchingMods: 'Fout bij het zoeken naar mods',
+  modsListVisual: 'Visueel',
+  modsListManual: 'Handmatig',
+  modsListEmpty: 'Nog geen mods',
+  modsListEmptyHint: 'Gebruik "Mods zoeken" om ze met een vaste versie toe te voegen.',
+  modsCount: 'mods',
+  modVersionLatest: 'Laatste beschikbare',
+  modVersionsEmpty: 'Geen versies voor deze Minecraft-versie/loader',
+  modUpdateAvailable: 'Update beschikbaar',
+  modOptional: 'Optioneel',
+  modOptionalHelp: 'itzg blijft de server starten als er geen compatibele versie is, en laat deze mod buiten de versieberekening',
+  versionFromModrinthProjects: 'Versie op basis van mods',
+  versionFromModrinthProjectsDesc: 'De nieuwste Minecraft-versie gebruiken die door alle niet-optionele mods in de lijst wordt ondersteund',
+  modpackNotSelected: 'Geen modpack geselecteerd',
+  removeModpack: 'Modpack verwijderen',
+  modpackVersion: 'Versie',
+  errorLoadingVersions: 'Fout bij het laden van modversies',
+  cfApiKeyFromSettings: 'De CurseForge API-sleutel komt uit je globale instellingen.',
   loadingModpacks: 'Modpacks laden...',
   errorLoadingModpacks: 'Fout bij het laden van modpacks',
   errorSearchingModpacks: 'Fout bij het zoeken naar modpacks',
@@ -1378,6 +1445,11 @@ export const nl: Record<TranslationKey, string> = {
   curseforgeApiKeyNotConfigured:
     'CurseForge API Key is niet geconfigureerd. Voeg deze toe in Instellingen om deze functie te gebruiken.',
   goToSettings: 'Ga naar Instellingen',
+  cfApiKeyHowTo: 'Hoe krijg je er een',
+  cfApiKeyStep1: 'Log in op console.curseforge.com met je CurseForge-account.',
+  cfApiKeyStep2: 'Open het gedeelte API Keys en kopieer de sleutel die daar staat.',
+  cfApiKeyStep3: 'Plak hem in Instellingen > Integraties > CurseForge API Key en sla op.',
+  getCurseforgeApiKey: 'API-sleutel ophalen',
   createServerFromModpack: 'Maak een nieuwe server met dit modpack',
   serverIdRequired: 'Server ID is vereist',
   optional: 'optioneel',
@@ -1728,4 +1800,6 @@ export const nl: Record<TranslationKey, string> = {
   tabGroupOperation: 'Beheer',
   tabGroupMonitoring: 'Monitoring',
   back: 'Terug',
+  pageNotFoundTitle: 'Pagina niet gevonden',
+  pageNotFoundDesc: 'Deze pagina bestaat niet of is verplaatst.',
 };

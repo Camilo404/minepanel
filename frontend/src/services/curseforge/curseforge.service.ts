@@ -1,4 +1,6 @@
+import axios from "axios";
 import api from "../axios.service";
+import { ModVersionItem } from "../mods/mods-browser.service";
 
 export interface CurseForgeAuthor {
   id: number;
@@ -116,6 +118,15 @@ export interface CurseForgeModResponse {
   data: CurseForgeModpack;
 }
 
+// The backend answers 400 when no CurseForge key is stored in settings and 403
+// when the stored key is rejected upstream. Both mean "fix your API key".
+export const isCurseForgeApiKeyError = (error: unknown): boolean => {
+  if (!axios.isAxiosError(error)) return false;
+  if (error.response?.status === 403) return true;
+  const message = (error.response?.data as { message?: string } | undefined)?.message ?? "";
+  return error.response?.status === 400 && message.toLowerCase().includes("api key");
+};
+
 export const searchModpacks = async (
   searchFilter?: string,
   pageSize: number = 20,
@@ -172,6 +183,18 @@ export const getModpack = async (id: number): Promise<CurseForgeModpack> => {
     console.error("Error fetching modpack:", error);
     throw error;
   }
+};
+
+export const resolveModpack = async (ref: string): Promise<CurseForgeModpack> => {
+  const response = await api.get<CurseForgeModpack>(`/curseforge/modpacks/${encodeURIComponent(ref)}`);
+  return response.data;
+};
+
+export const getModpackFiles = async (ref: string): Promise<ModVersionItem[]> => {
+  const response = await api.get<{ data: ModVersionItem[] }>(
+    `/curseforge/modpacks/${encodeURIComponent(ref)}/files`,
+  );
+  return response.data.data;
 };
 
 export const formatDownloadCount = (count: number): string => {

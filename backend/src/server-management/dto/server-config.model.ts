@@ -1,7 +1,10 @@
-import { IsString, IsOptional, IsBoolean, IsEnum, IsNotEmpty } from 'class-validator';
+import { IsString, IsOptional, IsBoolean, IsEnum, IsNotEmpty, Matches } from 'class-validator';
 import { PartialType } from '@nestjs/mapped-types';
 
 export type ServerEdition = 'JAVA' | 'BEDROCK';
+
+// Seconds Docker must keep waiting after the stop announcement so Minecraft can flush its final save
+export const SHUTDOWN_BUFFER_SECONDS = 60;
 
 export class ServerConfigDto {
   @IsString()
@@ -20,9 +23,9 @@ export class ServerConfigDto {
   @IsOptional()
   edition?: ServerEdition;
 
-  @IsEnum(['VANILLA', 'FORGE', 'NEOFORGE', 'AUTO_CURSEFORGE', 'CURSEFORGE', 'MODRINTH', 'GTNH', 'SPIGOT', 'FABRIC', 'MAGMA', 'PAPER', 'QUILT', 'BUKKIT', 'PUFFERFISH', 'PURPUR', 'LEAF', 'FOLIA'])
+  @IsEnum(['VANILLA', 'FORGE', 'NEOFORGE', 'AUTO_CURSEFORGE', 'CURSEFORGE', 'FTBA', 'MODRINTH', 'GTNH', 'SPIGOT', 'FABRIC', 'MAGMA', 'PAPER', 'QUILT', 'BUKKIT', 'PUFFERFISH', 'PURPUR', 'LEAF', 'FOLIA'])
   @IsOptional()
-  serverType?: 'VANILLA' | 'FORGE' | 'NEOFORGE' | 'AUTO_CURSEFORGE' | 'CURSEFORGE' | 'MODRINTH' | 'GTNH' | 'SPIGOT' | 'FABRIC' | 'MAGMA' | 'PAPER' | 'QUILT' | 'BUKKIT' | 'PUFFERFISH' | 'PURPUR' | 'LEAF' | 'FOLIA';
+  serverType?: 'VANILLA' | 'FORGE' | 'NEOFORGE' | 'AUTO_CURSEFORGE' | 'CURSEFORGE' | 'FTBA' | 'MODRINTH' | 'GTNH' | 'SPIGOT' | 'FABRIC' | 'MAGMA' | 'PAPER' | 'QUILT' | 'BUKKIT' | 'PUFFERFISH' | 'PURPUR' | 'LEAF' | 'FOLIA';
 
   // General configuration
   @IsString()
@@ -212,10 +215,12 @@ export class ServerConfigDto {
   simulationDistance?: string;
 
   @IsString()
+  @Matches(/^\d+$/, { message: 'uid must be a numeric string' })
   @IsOptional()
   uid?: string;
 
   @IsString()
+  @Matches(/^\d+$/, { message: 'gid must be a numeric string' })
   @IsOptional()
   gid?: string;
 
@@ -434,6 +439,10 @@ export class ServerConfigDto {
   @IsOptional()
   modrinthLoader?: string;
 
+  @IsBoolean()
+  @IsOptional()
+  versionFromModrinthProjects?: boolean;
+
   @IsString()
   @IsOptional()
   modrinthModpack?: string;
@@ -450,6 +459,15 @@ export class ServerConfigDto {
   @IsBoolean()
   @IsOptional()
   skipGtnhUpdateCheck?: boolean;
+
+  // FTBA specific
+  @IsString()
+  @IsOptional()
+  ftbModpackId?: string;
+
+  @IsString()
+  @IsOptional()
+  ftbModpackVersionId?: string;
 
   // Ports
   @IsString({ each: true })
@@ -496,6 +514,11 @@ export class ServerConfigDto {
   @IsString()
   @IsOptional()
   cfFilenameMatcher?: string;
+
+  // Container path to an unpublished modpack zip, e.g. /modpacks/pack.zip
+  @IsString()
+  @IsOptional()
+  cfModpackZip?: string;
 
   @IsString()
   @IsOptional()

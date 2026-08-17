@@ -2,12 +2,14 @@ import { Controller, Post, Body, ForbiddenException, UnauthorizedException, UseG
 import { ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
 import { AuthGuard } from '@nestjs/passport';
+import { Throttle, ThrottlerGuard, seconds } from '@nestjs/throttler';
 import { JwtAuthGuard } from './guards/auth.guard';
 import { Public } from './decorators/public.decorator';
 import { Response, Request } from 'express';
 import { AcceptInvitationDto, ForgotPasswordDto, LoginDto, ResetPasswordDto, SetupAdminDto } from './dtos/auth.dto';
 import { CreateUserInvitationDto } from 'src/users/dtos/users.dto';
 import { AuditLogService } from 'src/users/services/audit-log.service';
+import { InstanceSettingsService } from 'src/settings/instance-settings.service';
 import { setAuthCookies } from './utils/auth-cookies';
 
 @Controller('auth')
@@ -16,6 +18,7 @@ export class AuthController {
     private readonly authService: AuthService,
     private readonly auditLogService: AuditLogService,
     private readonly configService: ConfigService,
+    private readonly instanceSettings: InstanceSettingsService,
   ) {}
 
   @Public()
@@ -25,13 +28,14 @@ export class AuthController {
   }
 
   @Public()
-  @UseGuards(AuthGuard('local'))
+  @Throttle({ default: { limit: 10, ttl: seconds(60) } })
+  @UseGuards(ThrottlerGuard, AuthGuard('local'))
   @Post('login')
   async login(
     @Body() body: LoginDto,
     @Res({ passthrough: true }) res: Response,
   ) {
-    this.assertPasswordLoginEnabled();
+    await this.assertPasswordLoginEnabled();
 
     const user = await this.authService.validateUser(body.username, body.password);
     if (!user) throw new UnauthorizedException('Invalid credentials');
@@ -56,7 +60,7 @@ export class AuthController {
   @Public()
   @Post('setup-admin')
   async setupAdmin(@Body() body: SetupAdminDto, @Res({ passthrough: true }) res: Response) {
-    this.assertPasswordLoginEnabled();
+    await this.assertPasswordLoginEnabled();
 
     const tokens = await this.authService.createInitialAdmin(body);
     setAuthCookies(res, tokens.access_token, tokens.refresh_token, tokens.expires_in);
@@ -113,6 +117,8 @@ export class AuthController {
   }
 
   @Public()
+  @Throttle({ default: { limit: 10, ttl: seconds(300) } })
+  @UseGuards(ThrottlerGuard)
   @Post('invitations/accept')
   async acceptInvitation(@Body() body: AcceptInvitationDto, @Res({ passthrough: true }) res: Response) {
     const tokens = await this.authService.acceptInvitation(body.token, body.username, body.password, body.email);
@@ -154,6 +160,8 @@ export class AuthController {
   }
 
   @Public()
+  @Throttle({ default: { limit: 5, ttl: seconds(300) } })
+  @UseGuards(ThrottlerGuard)
   @Post('forgot-password')
   async forgotPassword(@Body() body: ForgotPasswordDto) {
     await this.authService.createPasswordReset(body.email);
@@ -164,6 +172,8 @@ export class AuthController {
   }
 
   @Public()
+  @Throttle({ default: { limit: 10, ttl: seconds(300) } })
+  @UseGuards(ThrottlerGuard)
   @Post('reset-password')
   async resetPassword(@Body() body: ResetPasswordDto) {
     await this.authService.resetPassword(body.token, body.password);
@@ -191,9 +201,9 @@ export class AuthController {
     return { message: 'Logged out successfully' };
   }
 
-  private assertPasswordLoginEnabled(): void {
-    const oidc = this.configService.get('oidc');
-    if (oidc?.enabled && oidc?.disablePasswordLogin) {
+  private async assertPasswordLoginEnabled(): Promise<void> {
+    const oidc = await this.instanceSettings.getOidc();
+    if (oidc.enabled && oidc.disablePasswordLogin) {
       throw new ForbiddenException('Password login is disabled; use single sign-on');
     }
   }

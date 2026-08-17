@@ -55,6 +55,7 @@ flowchart LR
 | -------------- | ------------------------ | ---------------- |
 | **Modrinth**   | Mods, datapacks, plugins | ❌ No            |
 | **CurseForge** | Modpacks, mods           | ✅ Yes           |
+| **Feed The Beast** | FTB modpacks          | ❌ No            |
 | **Spiget**     | Spigot/Paper plugins     | ❌ No            |
 
 ::: tip Learn More
@@ -87,6 +88,8 @@ Minepanel includes an integrated search dialog in the **Mods** tab for both **Cu
 - Adds entries in one click as:
   - **Slug** (default)
   - **ID**
+- Pins the latest compatible version of the mod when adding it, so the server does
+  not silently change mod versions between restarts
 
 ### How to use it
 
@@ -97,6 +100,24 @@ Minepanel includes an integrated search dialog in the **Mods** tab for both **Cu
 5. Click **Add mod**
 
 The selected entries are appended to the same existing fields (`CURSEFORGE_FILES` and `MODRINTH_PROJECTS`) using newline format, preserving manual entries and avoiding duplicates.
+
+### Mod list editor
+
+Both fields render their content as a list instead of raw text:
+
+- Each mod shows its icon, name and the pinned version
+- The version dropdown lists every compatible version and includes **Latest available**
+  (which removes the pin and lets the image resolve it at startup)
+- An **Update available** badge appears next to a pinned mod when a newer compatible
+  version exists; clicking it re-pins the mod to that version
+- The trash icon removes the mod
+- **Manual** switches back to the raw text area (`slug`, `slug:fileId`, URLs, `datapack:slug`),
+  which is still the way to paste a list or use formats the list editor does not model
+
+### CurseForge API key
+
+The key is read from **Settings -> Integrations** and injected into the generated compose
+on save, so the Mods tab no longer asks for a per-server key. Modrinth needs no key at all.
 
 ---
 
@@ -256,6 +277,7 @@ When creating/editing a server with type **MODRINTH_MODPACK**, there is one meth
 | **Slug**              | ✅ Yes         | Always gets the latest compatible version |
 | **URL**               | ✅ Yes         | Always gets the latest compatible version |
 | **URL with verison**  | ✅ No          | Locks to the specified version            |
+| **Uploaded .mrpack**  | ❌ No          | Install a modpack that is not published   |
 
 **Slug**
 
@@ -272,6 +294,16 @@ When creating/editing a server with type **MODRINTH_MODPACK**, there is one meth
 1. Enter the modpack project URL for a specific version (e.g., `https://modrinth.com/modpack/surface-living/version/1.2.1`)
 2. On each server start, it will **ignore any updated version** of the modpack
 
+**Uploaded `.mrpack`**
+
+1. Click **Upload modpack** and pick the `.mrpack` file
+2. Select it in the list; the field is filled with its path (e.g., `/modpacks/my-pack.mrpack`)
+
+This is the way to run a pack that is not published on Modrinth. It also covers instances exported
+from **Prism Launcher**, MultiMC or the Modrinth app: mods that are not on Modrinth are bundled into
+the pack's `overrides`, so nothing is lost. Remove client-only mods before exporting, or exclude
+them with `MODRINTH_EXCLUDE_FILES` in the **Advanced** tab.
+
 ## CurseForge Modpacks {#curseforge-modpacks}
 
 Install complete modpacks from [CurseForge](https://www.curseforge.com) using the **AUTO_CURSEFORGE** server type.
@@ -284,11 +316,11 @@ You need a CurseForge API key. Get one from [CurseForge for Studios](https://con
 
 When creating/editing a server with type **AUTO_CURSEFORGE**, you can choose between 3 methods:
 
-| Method   | Auto-updates? | Use case                                 |
-| -------- | ------------- | ---------------------------------------- |
-| **URL**  | ✅ Yes         | Always get the latest compatible version |
-| **Slug** | ❌ No          | Lock to a specific file version          |
-| **File** | ❌ No          | Use a local modpack zip file             |
+| Method   | Auto-updates? | Use case                                     |
+| -------- | ------------- | -------------------------------------------- |
+| **URL**  | ✅ Yes         | Always get the latest compatible version     |
+| **Slug** | ❌ No          | Lock to a specific file version              |
+| **File** | ❌ No          | Install an unpublished modpack zip you upload |
 
 ### Method: URL (Recommended for auto-updates)
 
@@ -325,11 +357,22 @@ With Slug method, the version **never updates automatically**. You must manually
 
 ### Method: File (Local modpack)
 
-1. Select **File** as installation method
-2. Upload/mount your modpack zip to the server
-3. Enter the file pattern (e.g., `*.zip`)
+For modpacks that are not published on CurseForge: your own pack, one a friend sent you, or a
+private pack exported from the CurseForge app.
 
-Useful for modpacks downloaded manually or custom modpacks.
+1. Select **File** as installation method
+2. Click **Upload modpack** and pick the `.zip`
+3. Select the uploaded file in the list
+
+The file is stored in `servers/<server-id>/modpacks/` and mounted read-only at `/modpacks`, and the
+panel sets `CF_MODPACK_ZIP` to it. It must be a **client** modpack zip containing `manifest.json`;
+a server-files zip has no manifest and fails. A CurseForge API key is still required, because the
+mods listed in the manifest are downloaded from CurseForge.
+
+::: tip Not a CurseForge zip?
+Prism Launcher and MultiMC do not export CurseForge packs — they export Modrinth `.mrpack`. Use the
+[Modrinth modpack](#modrinth-modpacks) flow for those.
+:::
 
 ### Use the modpack URL, not the server-file URL
 
@@ -377,6 +420,21 @@ Recommended workflow:
 1. Keep a fixed pack version such as `2.8.1`
 2. Leave update check enabled for the first install
 3. Only enable `SKIP_GTNH_UPDATE_CHECK` after the server has been installed once
+
+## Feed The Beast (FTBA) {#ftba}
+
+Minepanel supports [Feed The Beast](https://www.feed-the-beast.com/) modpacks through the dedicated **FTBA** server type. No CurseForge API key is needed — FTB serves the packs directly. The pack pins its own Minecraft and loader version, so you don't set a Minecraft version by hand.
+
+Available FTBA fields in Minepanel:
+
+- `FTB_MODPACK_ID` — the numeric modpack ID from the pack's page on feed-the-beast.com (required)
+- `FTB_MODPACK_VERSION_ID` — a specific version ID; leave it empty to always install the latest
+
+How to set it up:
+
+1. Create/edit a server and pick **Feed The Beast** as the server type (under **Others**)
+2. Open the **Mods** tab and enter the **FTB Modpack ID**
+3. Optionally set a **FTB Version ID** to lock the pack to a specific version
 
 ## CurseForge Files (Individual Mods) {#curseforge-files}
 

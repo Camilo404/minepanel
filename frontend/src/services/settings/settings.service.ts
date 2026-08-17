@@ -1,6 +1,5 @@
+import type { Language } from '@/lib/translations';
 import api from '../axios.service';
-
-type AppLanguage = 'en' | 'es' | 'nl' | 'de' | 'fr' | 'pl';
 
 export interface ProxySettings {
   enabled: boolean;
@@ -36,19 +35,68 @@ export interface JavaServerDefaults {
 }
 
 export interface UserSettings {
-  cfApiKey?: string;
-  discordWebhook?: string;
-  language?: AppLanguage;
+  // Secrets are write-only: the API returns whether they are set, not the value.
+  hasCfApiKey?: boolean;
+  hasDiscordWebhook?: boolean;
+  language?: Language;
   proxy?: ProxySettings;
   network?: NetworkSettings;
   javaServerDefaults?: JavaServerDefaults | null;
   auditRetentionDays?: number;
 }
 
+export interface SmtpIntegration {
+  host: string;
+  port: number | null;
+  secure: boolean;
+  user: string;
+  from: string;
+  hasPassword: boolean;
+  configured: boolean;
+  source: 'db' | 'env' | 'unset';
+}
+
+export interface OidcIntegration {
+  issuer: string;
+  clientId: string;
+  redirectUri: string;
+  scopes: string;
+  providerName: string;
+  disablePasswordLogin: boolean;
+  hasClientSecret: boolean;
+  configured: boolean;
+  source: 'db' | 'env' | 'unset';
+}
+
+export interface IntegrationSettings {
+  smtp: SmtpIntegration;
+  oidc: OidcIntegration;
+}
+
+export interface UpdateIntegrationSettings {
+  smtp?: {
+    host?: string;
+    port?: number;
+    secure?: boolean;
+    user?: string;
+    password?: string;
+    from?: string;
+  };
+  oidc?: {
+    issuer?: string;
+    clientId?: string;
+    clientSecret?: string;
+    redirectUri?: string;
+    scopes?: string;
+    providerName?: string;
+    disablePasswordLogin?: boolean;
+  };
+}
+
 export interface UpdateUserSettings {
   cfApiKey?: string;
   discordWebhook?: string;
-  language?: AppLanguage;
+  language?: Language;
   proxy?: {
     proxyEnabled?: boolean;
     proxyBaseDomain?: string;
@@ -89,4 +137,19 @@ export const testDiscordWebhook = async (): Promise<{ success: boolean; message:
     console.error('Error testing Discord webhook:', error);
     throw error;
   }
+};
+
+export const getIntegrationSettings = async (): Promise<IntegrationSettings> => {
+  const response = await api.get('/settings/integrations');
+  return response.data;
+};
+
+export const updateIntegrationSettings = async (settings: UpdateIntegrationSettings): Promise<IntegrationSettings> => {
+  const response = await api.patch('/settings/integrations', settings);
+  return response.data;
+};
+
+export const testSmtp = async (): Promise<{ success: boolean; message: string }> => {
+  const response = await api.post('/settings/integrations/smtp/test');
+  return response.data;
 };

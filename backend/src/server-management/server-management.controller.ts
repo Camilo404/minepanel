@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param, NotFoundException, Put, Query, BadRequestException, ValidationPipe, Delete, UseGuards, Request, ForbiddenException, Optional, Sse, MessageEvent } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, NotFoundException, Put, Query, BadRequestException, ValidationPipe, Delete, UseGuards, Request, ForbiddenException, InternalServerErrorException, Optional, Sse, MessageEvent } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { DockerComposeService } from 'src/docker-compose/docker-compose.service';
 import { ServerManagementService } from './server-management.service';
@@ -16,6 +16,103 @@ import { UsersService } from 'src/users/services/users.service';
 import { AccessControlService } from 'src/users/services/access-control.service';
 import { Users } from 'src/users/entities/users.entity';
 import { AuditLogService } from 'src/users/services/audit-log.service';
+
+// Accepts an ISO 8601 timestamp, a Unix timestamp, or a Go-style duration (e.g. "10m", "1h30m").
+// Anything else is rejected so the value can never break out of the `docker logs --since` argument.
+const LOGS_SINCE_PATTERN = /^(?:\d{1,14}(?:\.\d{1,9})?|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})?|(?:\d+(?:ns|us|µs|ms|s|m|h))+)$/;
+
+function assertValidSince(since: string): void {
+  if (!LOGS_SINCE_PATTERN.test(since)) {
+    throw new BadRequestException('Invalid "since" value: expected an ISO 8601 timestamp, a Unix timestamp, or a duration like "10m" or "1h".');
+  }
+}
+
+// Fields that reach the Docker host or decide which code runs inside the container.
+// Being assigned to a server is enough to operate it, but not to change these.
+const ADMIN_ONLY_CONFIG_FIELDS = [
+  'dockerVolumes',
+  'backupHostDir',
+  'dockerImage',
+  'dockerLabels',
+  'uid',
+  'gid',
+  'envVars',
+  'fabricLauncherUrl',
+  'paperDownloadUrl',
+  'bukkitDownloadUrl',
+  'spigotDownloadUrl',
+  'purpurDownloadUrl',
+  'foliaDownloadUrl',
+] as const;
+
+// Creation has no persisted config to compare against, so these are rejected
+// outright for non-admins. `envVars` is screened key by key in assertSafeEnvVars
+// instead, because the bundled Geyser template ships one.
+const ADMIN_ONLY_ON_CREATE_FIELDS = [
+  'dockerImage',
+  'dockerLabels',
+  'uid',
+  'gid',
+  'fabricLauncherUrl',
+  'paperDownloadUrl',
+  'bukkitDownloadUrl',
+  'spigotDownloadUrl',
+  'purpurDownloadUrl',
+  'foliaDownloadUrl',
+] as const;
+
+const ADMIN_ONLY_ENV_KEYS = new Set([
+  'UID',
+  'GID',
+  'EXEC_DIRECTLY',
+  'JVM_OPTS',
+  'JVM_XX_OPTS',
+  'JVM_DD_OPTS',
+  'CUSTOM_SERVER',
+  'SERVER_JAR',
+  'RCON_PASSWORD',
+]);
+
+const ADMIN_ONLY_ENV_KEY_SUFFIXES = ['_DOWNLOAD_URL', '_LAUNCHER_URL'];
+
+const ARTIFACT_ENV_KEYS = new Set(['PLUGINS', 'MODS', 'MODPACK', 'DATAPACKS', 'GENERIC_PACKS']);
+
+const TRUSTED_ARTIFACT_HOSTS = new Set([
+  'download.geysermc.org',
+  'api.papermc.io',
+  'hangarcdn.papermc.io',
+  'cdn.modrinth.com',
+  'api.modrinth.com',
+  'mediafilez.forgecdn.net',
+  'edge.forgecdn.net',
+]);
+
+function isTrustedArtifactRef(value: string): boolean {
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) return true;
+
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && TRUSTED_ARTIFACT_HOSTS.has(url.hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+function normalizeConfigValue(value: unknown): string {
+  if (value === undefined || value === null) return '';
+  return String(value)
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join('\n');
+}
+
+// Compose generation only rewrites `./` sources into the server's own directory.
+// Everything else (absolute paths, named volumes, `../` escapes) is a raw bind.
+function isSelfContainedVolume(volume: string): boolean {
+  const source = volume.split(':')[0];
+  return source.startsWith('./') && !source.split('/').includes('..');
+}
 
 const JAVA_SERVER_DEFAULT_KEYS = new Set([
   'onlineMode',
@@ -96,7 +193,7 @@ export class ServerManagementController {
 
   private async requireAdmin(req): Promise<Users> {
     if (!this.usersService || !this.accessControlService) {
-      return null;
+      throw new InternalServerErrorException('Access control is not available');
     }
     const user = await this.getCurrentUser(req);
     if (!this.accessControlService.isAdmin(user)) {
@@ -108,11 +205,78 @@ export class ServerManagementController {
 
   private async requireServerAccess(req, serverId: string): Promise<Users> {
     if (!this.usersService || !this.accessControlService) {
-      return null;
+      throw new InternalServerErrorException('Access control is not available');
     }
     const user = await this.getCurrentUser(req);
     this.accessControlService.assertServerAccess(user, serverId);
     return user;
+  }
+
+  // The panel submits the whole server form on every save, so non-admins are only
+  // blocked when a host-affecting field actually differs from what is persisted.
+  private assertCanChangeAdvancedConfig(user: Users | null, incoming: Partial<ServerConfig>, current: ServerConfig): void {
+    if (!this.accessControlService || this.accessControlService.isAdmin(user)) {
+      return;
+    }
+
+    const changed = ADMIN_ONLY_CONFIG_FIELDS.filter(
+      (field) => incoming[field] !== undefined && normalizeConfigValue(incoming[field]) !== normalizeConfigValue(current[field]),
+    );
+
+    if (changed.length > 0) {
+      throw new ForbiddenException(`Only admins can change these settings: ${changed.join(', ')}`);
+    }
+  }
+
+  private assertSafeNewServerConfig(user: Users | null, config: Partial<ServerConfig>): void {
+    if (!this.accessControlService || this.accessControlService.isAdmin(user)) {
+      return;
+    }
+
+    const unsafe = normalizeConfigValue(config.dockerVolumes)
+      .split('\n')
+      .filter((volume) => volume && !isSelfContainedVolume(volume));
+
+    if (unsafe.length > 0) {
+      throw new ForbiddenException('Only admins can mount host paths into a server container');
+    }
+
+    if (normalizeConfigValue(config.backupHostDir)) {
+      throw new ForbiddenException('Only admins can set a custom backup host directory');
+    }
+
+    const provided = ADMIN_ONLY_ON_CREATE_FIELDS.filter((field) => normalizeConfigValue(config[field]));
+    if (provided.length > 0) {
+      throw new ForbiddenException(`Only admins can set these settings: ${provided.join(', ')}`);
+    }
+
+    this.assertSafeEnvVars(config.envVars);
+  }
+
+  private assertSafeEnvVars(envVars: string | undefined): void {
+    for (const entry of normalizeConfigValue(envVars).split('\n').filter(Boolean)) {
+      const separator = entry.indexOf('=');
+      if (separator === -1) continue;
+
+      const key = entry.slice(0, separator).trim().toUpperCase();
+      const value = entry.slice(separator + 1).trim();
+
+      if (ADMIN_ONLY_ENV_KEYS.has(key) || ADMIN_ONLY_ENV_KEY_SUFFIXES.some((suffix) => key.endsWith(suffix))) {
+        throw new ForbiddenException(`Only admins can set the ${key} environment variable`);
+      }
+
+      if (!ARTIFACT_ENV_KEYS.has(key)) continue;
+
+      const untrusted = value
+        .split(',')
+        .map((ref) => ref.trim())
+        .filter(Boolean)
+        .filter((ref) => !isTrustedArtifactRef(ref));
+
+      if (untrusted.length > 0) {
+        throw new ForbiddenException(`Only admins can load ${key} from an untrusted source: ${untrusted.join(', ')}`);
+      }
+    }
   }
 
   private resolveRequestAndId(reqOrId, id?: string) {
@@ -153,7 +317,7 @@ export class ServerManagementController {
     }
 
     if (!this.usersService || !this.accessControlService) {
-      return allStatus;
+      throw new InternalServerErrorException('Access control is not available');
     }
 
     const user = await this.getCurrentUser(req);
@@ -165,7 +329,7 @@ export class ServerManagementController {
   async getAllServersResources(@Request() req) {
     const resources = await this.managementService.getAllServersResources();
     if (!this.usersService || !this.accessControlService) {
-      return resources;
+      throw new InternalServerErrorException('Access control is not available');
     }
     const user = await this.getCurrentUser(req);
     const visibleIds = new Set(this.accessControlService.getVisibleServerIds(user, Object.keys(resources)));
@@ -189,6 +353,7 @@ export class ServerManagementController {
       if (currentUser && this.accessControlService) {
         this.accessControlService.assertCreateServers(currentUser);
       }
+      this.assertSafeNewServerConfig(currentUser, data);
       const id = data.id;
       if (!id) throw new BadRequestException('Server ID is required');
       if (!/^[a-zA-Z0-9_-]+$/.test(id)) {
@@ -198,10 +363,12 @@ export class ServerManagementController {
       const user = req.user as PayloadToken;
       const settings = await this.settingsService.getSettings(user.userId);
 
-      if (data.serverType === 'AUTO_CURSEFORGE' && !data.cfApiKey) {
-        if (settings.cfApiKey) {
-          data.cfApiKey = settings.cfApiKey;
-        }
+      // The global CurseForge API key is the only one the UI manages, so it
+      // wins over any key stored on the server config by older versions. It is
+      // written into the generated compose so itzg can read it as CF_API_KEY.
+      const cfApiKey = await this.settingsService.getCfApiKey(user.userId);
+      if (cfApiKey) {
+        data.cfApiKey = cfApiKey;
       }
 
       const proxyEnabled = settings.preferences?.proxyEnabled && !!settings.preferences?.proxyBaseDomain;
@@ -239,7 +406,7 @@ export class ServerManagementController {
         server: serverConfig,
       };
     } catch (error) {
-      if (error instanceof BadRequestException) throw error;
+      if (error instanceof BadRequestException || error instanceof ForbiddenException) throw error;
       throw new BadRequestException(error.message || 'Failed to create server');
     }
   }
@@ -273,6 +440,7 @@ export class ServerManagementController {
       extraPorts: [],
       proxyHostname: undefined,
       backupHostDir: undefined,
+      dockerVolumes: this.dockerComposeService.remapVolumesToServer(config.dockerVolumes, id, body.newId),
     };
     if (config.worldScope === 'local' && config.worldSource) {
       clonePayload.worldSource = '';
@@ -413,6 +581,12 @@ export class ServerManagementController {
   @Put(':id')
   async updateServer(@Request() req, @Param('id') id: string, @Body(new ValidationPipe()) config: UpdateServerConfigDto) {
     const currentUser = await this.requireServerAccess(req, id);
+    const currentConfig = await this.dockerComposeService.getServerConfig(id);
+    if (!currentConfig) {
+      throw new NotFoundException(`Server with ID "${id}" not found`);
+    }
+    this.assertCanChangeAdvancedConfig(currentUser, config, currentConfig);
+
     const user = req.user as PayloadToken;
     const settings = await this.settingsService.getSettings(user.userId);
     const proxyEnabled = settings.preferences?.proxyEnabled && !!settings.preferences?.proxyBaseDomain;
@@ -616,6 +790,9 @@ export class ServerManagementController {
     const resolvedLines = typeof idOrLines === 'number' && lines === undefined ? idOrLines : lines;
     const lineCount = resolvedLines && resolvedLines > 0 ? Math.min(resolvedLines, 10000) : 100;
 
+    if (since) {
+      assertValidSince(since);
+    }
     if (stream === 'true' && since) {
       return this.managementService.getServerLogsStream(resolved.id, lineCount, since);
     }
@@ -629,6 +806,9 @@ export class ServerManagementController {
   async getServerLogsStream(@Request() req, @Param('id') id: string, @Query('lines') lines?: number, @Query('since') since?: string) {
     const user = await this.getCurrentUser(req);
     this.accessControlService.assertViewLogs(user, id);
+    if (since) {
+      assertValidSince(since);
+    }
     const lineCount = lines && lines > 0 ? Math.min(lines, 5000) : 500;
     return this.managementService.getServerLogsStream(id, lineCount, since);
   }
@@ -645,6 +825,7 @@ export class ServerManagementController {
   async getServerLogsSince(@Request() req, @Param('id') id: string, @Param('timestamp') timestamp: string) {
     const user = await this.getCurrentUser(req);
     this.accessControlService.assertViewLogs(user, id);
+    assertValidSince(timestamp);
     return this.managementService.getServerLogsSince(id, timestamp);
   }
 

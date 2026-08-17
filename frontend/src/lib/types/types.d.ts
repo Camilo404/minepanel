@@ -13,6 +13,7 @@ export type ServerType =
   | 'AUTO_CURSEFORGE'
   | 'MODRINTH'
   | 'CURSEFORGE'
+  | 'FTBA'
   | 'GTNH'
   | 'SPIGOT'
   | 'FABRIC'
@@ -172,6 +173,7 @@ export interface ServerConfig {
   modrinthDownloadDependencies?: 'none' | 'required' | 'optional';
   modrinthDefaultVersionType?: 'release' | 'beta' | 'alpha';
   modrinthLoader?: string;
+  versionFromModrinthProjects?: boolean;
 
   modrinthModpack?: string;
 
@@ -179,6 +181,10 @@ export interface ServerConfig {
   gtnhPackVersion?: string;
   gtnhDeleteBackups?: boolean;
   skipGtnhUpdateCheck?: boolean;
+
+  // FTBA specific
+  ftbModpackId?: string;
+  ftbModpackVersionId?: string;
 
   // CurseForge specific
   cfMethod?: 'url' | 'slug' | 'file';
@@ -191,6 +197,7 @@ export interface ServerConfig {
   cfForceInclude?: string;
   cfExclude?: string;
   cfFilenameMatcher?: string;
+  cfModpackZip?: string;
   cfParallelDownloads?: string;
   cfOverridesSkipExisting?: boolean;
   cfSetLevelFrom?: string;

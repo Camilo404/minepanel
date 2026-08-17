@@ -25,13 +25,27 @@ backend/src/
 |- files/                   File browser API over server directories
 |- world-discovery/         World import/discovery into global world library
 |- proxy/                   mc-router routes.json generation
+|- modpacks/                Per-server modpack files (.zip/.mrpack) under servers/<id>/modpacks
 |- system-monitoring/       Host metrics
 |- metrics/                 Per-server CPU/RAM history (1-min sampler, query API, live SSE stream)
 |- alerts/                  Per-server Discord alerts (down / high CPU / high RAM), fed by the metrics sampler
 |- scheduled-tasks/         Auto-restart and scheduled commands (fixed interval or cron expression via cron-parser)
 |- users/                   User and settings persistence, audit log entity/service/controller
+|- settings/                Global (instance-wide) integration settings: SMTP/OIDC in DB
+|- common/crypto/           Secret encryption at rest (AES-GCM, key derived from JWT_SECRET)
 |- database/                TypeORM/sql.js setup
 ```
+
+Integration settings & secrets:
+
+- SMTP and OIDC are read via `InstanceSettingsService` (module `settings/`), which merges
+  DB values over `.env` (DB wins). `auth-mail.service.ts` and `oidc.service.ts` consume it and
+  re-read on change via `registerResetHandler`; do not read `config.get('smtp'|'oidc')` directly.
+- Secrets (SMTP pass, OIDC client secret, CurseForge API key) are stored **encrypted** using
+  `common/crypto/secret-cipher.ts` and are **write-only** over HTTP: responses expose booleans
+  (`hasPassword`, `hasCfApiKey`, ...), never the value. The CurseForge key is decrypted only
+  server-side (`SettingsService.getCfApiKey`) and injected into the generated compose plaintext
+  so itzg reads it. Admin-only endpoints live in `users/controllers/integration-settings.controller.ts`.
 
 Primary runtime relationship:
 
@@ -76,6 +90,7 @@ Path and filesystem patterns (critical):
   - `/app/servers/<serverId>/docker-compose.yml`
   - `/app/servers/<serverId>/mc-data/`
   - `/app/servers/<serverId>/worlds/`
+  - `/app/servers/<serverId>/modpacks/` (mounted read-only at `/modpacks`; `CF_MODPACK_ZIP` and local `.mrpack` paths point here)
   - `/app/servers/<serverId>/backups/` (if backup enabled, default location)
 - Backup host mount is configurable: `BACKUP_BASE_DIR` (`backupBaseDir`) sets a global host base, and per-server `backupHostDir` overrides it. When set, the backup mount's host side can point outside `${BASE_DIR}` (e.g. a NAS); the backend's `fs.ensureDir` for it is best-effort (Docker creates the bind source if unreachable). See `resolveBackupsHostPath`/`parseBackupHostDir` in `docker-compose.service.ts`.
 - Global world library is reserved under `/app/servers/.world/worlds/`.
@@ -98,6 +113,7 @@ Path and filesystem patterns (critical):
 - `src/users/services/access-control.service.ts` - permission checks (`assertViewLogs`, `assertUseConsole`, etc.).
 - `src/metrics/metrics.service.ts` - 1-min sampler + `streamLive()` SSE emitter.
 - `src/metrics/metrics.controller.ts` - history endpoint + `@Sse()` stream endpoint.
+- `src/server-management/auto-scale.controller.ts` - mc-router auto-scaling webhook.
 - `package.json` - backend scripts.
 
 ## Agent-Specific Instructions
@@ -109,6 +125,7 @@ General:
 - If API contract changes, update frontend usage and docs in `doc/`.
 - Backend auth is private-by-default through a global JWT guard; only explicitly `@Public()` routes should bypass auth.
 - Keep auth transport limited to `httpOnly` cookies and bearer headers; never add JWT support via query params.
+- `POST /servers/autoscale` (`src/server-management/auto-scale.controller.ts`) is the only `@Public()` route that controls servers. It is off unless `MC_PROXY_AUTOSCALE_TOKEN` is set, authenticates mc-router with a constant-time bearer comparison, and must keep accepting only servers present in `routes.json`.
 - Optional SSO is OpenID Connect via `auth/oidc/*` (provider-agnostic; configured by `OIDC_*` env in `config.ts`). It validates the IdP `id_token` then issues the same Minepanel session cookies via `auth/utils/auth-cookies.ts`; the `client_secret` stays server-side and is never exposed. `OIDC_DISABLE_PASSWORD_LOGIN=true` blocks password login server-side (only when SSO is fully configured).
 
 Server ID and directory safety:
